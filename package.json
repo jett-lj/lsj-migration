@@ -1,0 +1,29 @@
+{
+  "name": "lsj-migration",
+  "version": "1.0.0",
+  "description": "Legacy CATTLE (SQL Server) → PostgreSQL migration tool for LSJ-HUB",
+  "main": "migrate.js",
+  "bin": {
+    "lsj-migrate": "./migrate.js"
+  },
+  "scripts": {
+    "migrate": "node migrate.js",
+    "migrate:dry-run": "node migrate.js --dry-run",
+    "migrate:audit": "node migrate.js --audit",
+    "migrate:validate": "node migrate.js --validate",
+    "migrate:reconcile": "node migrate.js --reconcile",
+    "test": "jest --forceExit --detectOpenHandles"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mssql": "^11.0.1",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testMatch": ["**/tests/**/*.test.js"],
+    "testTimeout": 30000
+  }
+}
