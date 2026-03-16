@@ -12,10 +12,12 @@
     "migrate:audit": "node migrate.js --audit",
     "migrate:validate": "node migrate.js --validate",
     "migrate:reconcile": "node migrate.js --reconcile",
+    "ui": "node server.js",
     "test": "jest --forceExit --detectOpenHandles"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "express": "^4.22.1",
     "mssql": "^11.0.1",
     "pg": "^8.13.1"
   },
@@ -23,7 +25,9 @@
     "jest": "^29.7.0"
   },
   "jest": {
-    "testMatch": ["**/tests/**/*.test.js"],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
     "testTimeout": 30000
   }
 }

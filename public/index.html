@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Migration Tool</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#fafafa;--fg:#1a1a1a;--muted:#888;--border:#e0e0e0;--accent:#111;--accent-light:#f0f0f0;--green:#2d7d46;--red:#c0392b;--bar:#111;--bar-bg:#e5e5e5;--radius:6px}
+body{font-family:-apple-system,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);line-height:1.5;min-height:100vh}
+a{color:var(--fg);text-decoration:none}
+
+/* ── Nav ─────────────────────────────── */
+nav{display:flex;align-items:center;gap:2rem;padding:1rem 2rem;border-bottom:1px solid var(--border);background:#fff}
+nav .brand{font-weight:700;font-size:1.1rem;letter-spacing:-.02em}
+nav .links{display:flex;gap:1.5rem}
+nav .links a{font-size:.875rem;color:var(--muted);transition:color .15s}
+nav .links a:hover,nav .links a.active{color:var(--fg)}
+nav .links a.active{font-weight:600}
+
+/* ── Layout ──────────────────────────── */
+.page{max-width:640px;margin:0 auto;padding:3rem 1.5rem}
+h1{font-size:1.5rem;font-weight:700;margin-bottom:.25rem;letter-spacing:-.03em}
+.subtitle{font-size:.875rem;color:var(--muted);margin-bottom:2.5rem}
+
+/* ── Buttons ─────────────────────────── */
+.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.625rem 1.25rem;font-size:.875rem;font-weight:600;border:none;border-radius:var(--radius);cursor:pointer;transition:background .15s,opacity .15s}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover:not(:disabled){background:#333}
+.btn-secondary{background:var(--accent-light);color:var(--fg);border:1px solid var(--border)}
+.btn-secondary:hover:not(:disabled){background:#e8e8e8}
+.btn-group{display:flex;gap:.75rem;margin-bottom:2rem;flex-wrap:wrap}
+
+/* ── Progress ────────────────────────── */
+.progress-wrap{margin-bottom:2rem;display:none}
+.progress-wrap.visible{display:block}
+.progress-label{display:flex;justify-content:space-between;font-size:.8rem;color:var(--muted);margin-bottom:.375rem}
+.progress-bar{height:6px;background:var(--bar-bg);border-radius:3px;overflow:hidden}
+.progress-bar .fill{height:100%;width:0%;background:var(--bar);border-radius:3px;transition:width .3s ease}
+/* ── Overall progress ───────────── */
+.overall-progress{margin-bottom:1.5rem;display:none}
+.overall-progress.visible{display:block}
+.overall-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.5rem}
+.overall-header .timer{font-size:1.5rem;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.overall-header .tables-done{font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.overall-bar{height:10px;background:var(--bar-bg);border-radius:5px;overflow:hidden}
+.overall-bar .fill{height:100%;width:0%;background:linear-gradient(90deg,var(--green),#4caf50);border-radius:5px;transition:width .4s ease}
+.overall-stats{display:flex;gap:1.5rem;margin-top:.5rem;font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.overall-stats span{display:flex;align-items:center;gap:.25rem}
+/* ── Status ──────────────────────────── */
+.status{font-size:.875rem;color:var(--muted);margin-bottom:1.5rem;min-height:1.3em;transition:color .2s}
+.status.error{color:var(--red)}
+.status.done{color:var(--green)}
+
+/* ── Log ─────────────────────────────── */
+.log-section{margin-top:1.5rem}
+.log-section summary{font-size:.8rem;color:var(--muted);cursor:pointer;user-select:none;margin-bottom:.5rem}
+.log{font-family:'SF Mono',Consolas,monospace;font-size:.75rem;background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.75rem;max-height:320px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;line-height:1.6}
+.log .warn{color:#b8860b}
+.log .error{color:var(--red)}
+
+/* ── Results table ───────────────────── */
+.results{margin-top:2rem}
+.results h2{font-size:1rem;font-weight:600;margin-bottom:.75rem}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th{text-align:left;padding:.5rem .75rem;border-bottom:2px solid var(--border);font-weight:600;color:var(--muted)}
+td{padding:.4rem .75rem;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;font-size:.7rem;font-weight:600;padding:.125rem .5rem;border-radius:3px}
+.badge.ok{background:#e8f5e9;color:var(--green)}
+.badge.fail{background:#fdecea;color:var(--red)}
+.badge.pass{background:#e8f5e9;color:var(--green)}
+
+/* ── Settings form ───────────────────── */
+.form-section{margin-bottom:2rem}
+.form-section h2{font-size:.9rem;font-weight:600;margin-bottom:1rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-size:.75rem}
+.field{margin-bottom:.875rem}
+.field label{display:block;font-size:.8rem;font-weight:500;margin-bottom:.25rem;color:var(--muted)}
+.field input{width:100%;padding:.5rem .625rem;font-size:.875rem;border:1px solid var(--border);border-radius:var(--radius);background:#fff;font-family:inherit;transition:border-color .15s}
+.field input:focus{outline:none;border-color:#999}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:.625rem 1.25rem;font-size:.8rem;font-weight:600;border-radius:var(--radius);background:var(--accent);color:#fff;opacity:0;transform:translateY(8px);transition:all .25s ease;pointer-events:none;z-index:100}
+.toast.visible{opacity:1;transform:translateY(0)}
+.toast.err{background:var(--red)}
+
+/* ── Field with inline action button ─── */
+.field-action{display:flex;gap:.5rem;align-items:flex-end}
+.field-action .field{flex:1;margin-bottom:0}
+.field-action .btn{flex-shrink:0;white-space:nowrap}
+.create-db-result{font-size:.8rem;margin-top:.375rem;display:flex;align-items:center;gap:.375rem}
+
+/* ── Connection test ─────────────────── */
+.conn-result{font-size:.8rem;margin-top:.375rem;display:flex;align-items:center;gap:.375rem}
+.conn-result .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot.ok{background:var(--green)}
+.dot.fail{background:var(--red)}
+.dot.pending{background:var(--muted);animation:pulse .8s infinite alternate}
+@keyframes pulse{from{opacity:.3}to{opacity:1}}
+
+/* ── Diff/Compare ──────────────── */
+.diff-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.75rem;margin-bottom:1.5rem}
+.diff-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.875rem;text-align:center}
+.diff-card .num{font-size:1.5rem;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.diff-card .label{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:.125rem}
+.diff-card.ok .num{color:var(--green)}
+.diff-card.warn .num{color:#e67e22}
+.diff-card.bad .num{color:var(--red)}
+.diff-table-section{margin-bottom:1.5rem}
+.diff-table-section h3{font-size:.85rem;font-weight:600;margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem}
+.diff-table-section h3 .count{font-size:.7rem;font-weight:500;color:var(--muted);background:var(--accent-light);padding:.125rem .5rem;border-radius:3px}
+.diff-expand{cursor:pointer;user-select:none}
+.diff-expand summary{font-size:.8rem;color:var(--muted);margin-bottom:.375rem}
+.diff-list{font-family:'SF Mono',Consolas,monospace;font-size:.75rem;background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .75rem;max-height:200px;overflow-y:auto;line-height:1.7}
+.diff-list .added{color:var(--green)}
+.diff-list .removed{color:var(--red)}
+.diff-list .changed{color:#e67e22}
+.diff-empty{font-size:.8rem;color:var(--muted);font-style:italic;padding:.5rem 0}
+
+/* ── Responsive ──────────────────────── */
+@media(max-width:480px){
+  nav{padding:.75rem 1rem;gap:1rem}
+  .page{padding:2rem 1rem}
+  .btn-group{flex-direction:column}
+  .row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">Migration Tool</div>
+  <div class="links">
+    <a href="#/" class="active" data-page="migrate">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Start Migration
+    </a>
+    <a href="#/settings" data-page="settings">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.32 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </a>
+    <a href="#/compare" data-page="compare">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Compare
+    </a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════ MIGRATE PAGE -->
+<div id="page-migrate" class="page">
+  <h1>Start Migration</h1>
+  <p class="subtitle">SQL Server → PostgreSQL</p>
+
+  <div class="btn-group">
+    <button class="btn btn-primary" id="btn-start" onclick="startMigration(false)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Start Migration
+    </button>
+    <button class="btn btn-secondary" id="btn-preview" onclick="startMigration(true)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Preview (Dry-run)
+    </button>
+  </div>
+
+  <div class="overall-progress" id="overall-progress">
+    <div class="overall-header">
+      <span class="timer" id="timer">00:00</span>
+      <span class="tables-done" id="tables-done">0 / 0 tables</span>
+    </div>
+    <div class="overall-bar"><div class="fill" id="overall-fill"></div></div>
+    <div class="overall-stats">
+      <span id="overall-rows">— rows written</span>
+      <span id="overall-errors">0 errors</span>
+    </div>
+  </div>
+
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-label">
+      <span id="progress-table">—</span>
+      <span id="progress-pct">0%</span>
+    </div>
+    <div class="progress-bar"><div class="fill" id="progress-fill"></div></div>
+  </div>
+
+  <div class="status" id="status">Ready</div>
+
+  <div class="results" id="results" style="display:none">
+    <h2>Results</h2>
+    <table>
+      <thead><tr><th>Table</th><th class="num">Read</th><th class="num">Written</th><th class="num">Errors</th><th>Status</th></tr></thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+
+  <div class="results" id="checks-section" style="display:none">
+    <h2>Validation</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Result</th></tr></thead>
+      <tbody id="checks-body"></tbody>
+    </table>
+  </div>
+
+  <details class="log-section">
+    <summary>Console log</summary>
+    <div class="log" id="log"></div>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════ SETTINGS PAGE -->
+<div id="page-settings" class="page" style="display:none">
+  <h1>Settings</h1>
+  <p class="subtitle">Database connection credentials</p>
+
+  <div class="form-section">
+    <h2>PostgreSQL (Target)</h2>
+    <div class="row">
+      <div class="field"><label>Host</label><input id="pg-host" placeholder="localhost"></div>
+      <div class="field"><label>Port</label><input id="pg-port" placeholder="5432"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>User</label><input id="pg-user" placeholder="postgres"></div>
+      <div class="field"><label>Password</label><input id="pg-password" type="password"></div>
+    </div>
+    <div class="field-action">
+      <div class="field"><label>Database</label><input id="pg-database" placeholder="barmount"></div>
+      <button class="btn btn-secondary" onclick="createDatabase()" id="btn-create-db" style="margin-bottom:.875rem">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        Create DB
+      </button>
+    </div>
+    <div class="create-db-result" id="create-db-result"></div>
+    <div class="conn-result" id="pg-conn"></div>
+  </div>
+
+  <div class="form-section">
+    <h2>SQL Server (Source)</h2>
+    <div class="row">
+      <div class="field"><label>Host</label><input id="ms-host" placeholder="localhost"></div>
+      <div class="field"><label>Port</label><input id="ms-port" placeholder="1433"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>User</label><input id="ms-user" placeholder="sa"></div>
+      <div class="field"><label>Password</label><input id="ms-password" type="password"></div>
+    </div>
+    <div class="field"><label>Database</label><input id="ms-database" placeholder="CATTLE"></div>
+    <div class="conn-result" id="ms-conn"></div>
+  </div>
+
+  <div class="form-section">
+    <h2>Options</h2>
+    <div class="field"><label>Batch Size</label><input id="batch-size" placeholder="500"></div>
+  </div>
+
+  <div class="btn-group">
+    <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    <button class="btn btn-secondary" onclick="testConnections()">Test Connections</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════════ COMPARE PAGE -->
+<div id="page-compare" class="page" style="display:none">
+  <h1>Compare Databases</h1>
+  <p class="subtitle">Find differences between SQL Server source and PostgreSQL target</p>
+
+  <div class="btn-group">
+    <button class="btn btn-primary" id="btn-compare" onclick="startCompare()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Run Comparison
+    </button>
+  </div>
+
+  <div class="status" id="compare-status">Ready</div>
+
+  <div id="compare-results" style="display:none">
+    <div class="diff-summary" id="diff-summary"></div>
+    <div id="diff-tables"></div>
+  </div>
+</div>
+
+<script>
+// ── Routing ─────────────────────────────────────────
+
+function route() {
+  const hash = location.hash || '#/';
+  document.getElementById('page-migrate').style.display  = hash === '#/' ? '' : 'none';
+  document.getElementById('page-settings').style.display = hash === '#/settings' ? '' : 'none';
+  document.getElementById('page-compare').style.display  = hash === '#/compare' ? '' : 'none';
+  document.querySelectorAll('nav .links a').forEach(a => {
+    a.classList.toggle('active', a.getAttribute('href') === hash);
+  });
+}
+window.addEventListener('hashchange', route);
+route();
+
+// ── Toast ───────────────────────────────────────────
+
+function toast(msg, isError) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast visible' + (isError ? ' err' : '');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.className = 'toast', 2500);
+}
+
+// ── SSE ─────────────────────────────────────────────
+
+let overallPct = 0;
+let timerInterval = null;
+let migrationStartTime = null;
+let tablesCompleted = 0;
+let totalTables = 0;
+let totalRowsWritten = 0;
+let totalRowsErrored = 0;
+
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const pad = n => String(n).padStart(2, '0');
+  if (h > 0) return pad(h) + ':' + pad(m % 60) + ':' + pad(s % 60);
+  return pad(m) + ':' + pad(s % 60);
+}
+
+function startTimer() {
+  migrationStartTime = Date.now();
+  tablesCompleted = 0;
+  totalTables = 0;
+  totalRowsWritten = 0;
+  totalRowsErrored = 0;
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    document.getElementById('timer').textContent = formatElapsed(Date.now() - migrationStartTime);
+  }, 1000);
+  document.getElementById('timer').textContent = '00:00';
+}
+
+function stopTimer() {
+  clearInterval(timerInterval);
+  timerInterval = null;
+}
+
+function updateOverall() {
+  const pct = totalTables > 0 ? Math.round(100 * tablesCompleted / totalTables) : 0;
+  document.getElementById('overall-fill').style.width = pct + '%';
+  document.getElementById('tables-done').textContent = tablesCompleted + ' / ' + totalTables + ' tables';
+  document.getElementById('overall-rows').textContent = totalRowsWritten.toLocaleString() + ' rows written';
+  document.getElementById('overall-errors').textContent = totalRowsErrored.toLocaleString() + ' errors';
+}
+
+const sse = new EventSource('/api/events');
+
+sse.addEventListener('status', e => {
+  const { step } = JSON.parse(e.data);
+  const el = document.getElementById('status');
+  el.textContent = step;
+  el.className = 'status' + (step.startsWith('Error') ? ' error' : '');
+});
+
+sse.addEventListener('progress', e => {
+  const { table, pct } = JSON.parse(e.data);
+  document.getElementById('progress-table').textContent = table;
+  document.getElementById('progress-pct').textContent = pct + '%';
+  document.getElementById('progress-fill').style.width = pct + '%';
+});
+
+sse.addEventListener('table-start', e => {
+  const { table, totalRows } = JSON.parse(e.data);
+  document.getElementById('progress-table').textContent = table;
+  document.getElementById('progress-pct').textContent = '0%';
+  document.getElementById('progress-fill').style.width = '0%';
+});
+
+sse.addEventListener('table-count', e => {
+  const { count, phase } = JSON.parse(e.data);
+  if (phase === 'mapped') {
+    totalTables = count;
+  } else {
+    totalTables += count;
+  }
+  updateOverall();
+});
+
+sse.addEventListener('table-done', e => {
+  const { written, skipped, errored } = JSON.parse(e.data);
+  tablesCompleted++;
+  totalRowsWritten += written;
+  totalRowsErrored += errored;
+  updateOverall();
+});
+
+sse.addEventListener('migration-start', () => {
+  document.getElementById('progress-wrap').classList.add('visible');
+  document.getElementById('overall-progress').classList.add('visible');
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('checks-section').style.display = 'none';
+  document.getElementById('results-body').innerHTML = '';
+  document.getElementById('checks-body').innerHTML = '';
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-preview').disabled = true;
+  startTimer();
+});
+
+sse.addEventListener('migration-complete', e => {
+  const { mapped, raw, checks, dryRun } = JSON.parse(e.data);
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-preview').disabled = false;
+
+  const el = document.getElementById('status');
+  el.textContent = dryRun ? 'Preview complete' : 'Migration complete';
+  el.className = 'status done';
+
+  // Fill results
+  const tbody = document.getElementById('results-body');
+  const all = [...(mapped || []), ...(raw || [])];
+  all.forEach(r => {
+    const status = r.status === 'completed'
+      ? '<span class="badge ok">OK</span>'
+      : '<span class="badge fail">FAIL</span>';
+    tbody.innerHTML += `<tr>
+      <td>${r.table}</td>
+      <td class="num">${(r.rowsRead||0).toLocaleString()}</td>
+      <td class="num">${(r.rowsWritten||0).toLocaleString()}</td>
+      <td class="num">${(r.rowsErrored||0).toLocaleString()}</td>
+      <td>${status}</td>
+    </tr>`;
+  });
+  document.getElementById('results').style.display = '';
+
+  // Checks
+  if (checks && checks.length > 0) {
+    const cb = document.getElementById('checks-body');
+    checks.forEach(c => {
+      const badge = c.passed
+        ? '<span class="badge pass">PASS</span>'
+        : '<span class="badge fail">FAIL</span>';
+      cb.innerHTML += `<tr><td>${c.check} — ${c.detail}</td><td>${badge}</td></tr>`;
+    });
+    document.getElementById('checks-section').style.display = '';
+  }
+
+  document.getElementById('progress-wrap').classList.remove('visible');
+  stopTimer();
+
+  // Show final overall stats
+  document.getElementById('overall-fill').style.width = '100%';
+  document.getElementById('tables-done').textContent = tablesCompleted + ' / ' + totalTables + ' tables \u2014 ' + formatElapsed(Date.now() - migrationStartTime);
+  updateOverall();
+  toast(dryRun ? 'Preview complete' : 'Migration complete');
+});
+
+sse.addEventListener('migration-error', e => {
+  const { error } = JSON.parse(e.data);
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-preview').disabled = false;
+  document.getElementById('progress-wrap').classList.remove('visible');
+  stopTimer();
+  toast(error, true);
+});
+
+sse.addEventListener('log', e => {
+  const { level, message } = JSON.parse(e.data);
+  const el = document.getElementById('log');
+  const span = document.createElement('span');
+  span.className = level;
+  span.textContent = message + '\n';
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+});
+
+// ── Migration ───────────────────────────────────────
+
+async function startMigration(dryRun) {
+  try {
+    const res = await fetch('/api/migrate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun }),
+    });
+    const data = await res.json();
+    if (!res.ok) toast(data.error, true);
+  } catch (e) {
+    toast('Failed to start migration', true);
+  }
+}
+
+// ── Settings ────────────────────────────────────────
+
+async function loadSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    const s = await res.json();
+    document.getElementById('pg-host').value     = s.pg.host;
+    document.getElementById('pg-port').value     = s.pg.port;
+    document.getElementById('pg-user').value     = s.pg.user;
+    document.getElementById('pg-password').value = s.pg.password === '••••••••' ? '' : s.pg.password;
+    document.getElementById('pg-password').placeholder = s.pg.password === '••••••••' ? '••••••••' : '';
+    document.getElementById('pg-database').value = s.pg.database;
+    document.getElementById('ms-host').value     = s.mssql.host;
+    document.getElementById('ms-port').value     = s.mssql.port;
+    document.getElementById('ms-user').value     = s.mssql.user;
+    document.getElementById('ms-password').value = s.mssql.password === '••••••••' ? '' : s.mssql.password;
+    document.getElementById('ms-password').placeholder = s.mssql.password === '••••••••' ? '••••••••' : '';
+    document.getElementById('ms-database').value = s.mssql.database;
+    document.getElementById('batch-size').value  = s.batchSize;
+  } catch (_) {}
+}
+loadSettings();
+
+async function saveSettings() {
+  const body = {
+    pg: {
+      host:     document.getElementById('pg-host').value,
+      port:     document.getElementById('pg-port').value,
+      user:     document.getElementById('pg-user').value,
+      password: document.getElementById('pg-password').value || '••••••••',
+      database: document.getElementById('pg-database').value,
+    },
+    mssql: {
+      host:     document.getElementById('ms-host').value,
+      port:     document.getElementById('ms-port').value,
+      user:     document.getElementById('ms-user').value,
+      password: document.getElementById('ms-password').value || '••••••••',
+      database: document.getElementById('ms-database').value,
+    },
+    batchSize: document.getElementById('batch-size').value,
+  };
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) toast('Settings saved');
+    else toast('Failed to save', true);
+  } catch (_) {
+    toast('Failed to save', true);
+  }
+}
+
+async function createDatabase() {
+  const dbName = document.getElementById('pg-database').value.trim();
+  const resultEl = document.getElementById('create-db-result');
+  const btn = document.getElementById('btn-create-db');
+  if (!dbName) { toast('Enter a database name first', true); return; }
+  btn.disabled = true;
+  resultEl.innerHTML = '<span class="dot pending"></span> Creating...';
+  try {
+    const res = await fetch('/api/create-db', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ database: dbName }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      resultEl.innerHTML = '<span class="dot ok"></span> Database "' + dbName + '" created successfully';
+      toast('Database created: ' + dbName);
+    } else {
+      resultEl.innerHTML = '<span class="dot fail"></span> ' + data.error;
+      toast(data.error, true);
+    }
+  } catch (e) {
+    resultEl.innerHTML = '<span class="dot fail"></span> Request failed';
+    toast('Request failed', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function testConnections() {
+  const pgEl = document.getElementById('pg-conn');
+  const msEl = document.getElementById('ms-conn');
+  pgEl.innerHTML = '<span class="dot pending"></span> Testing...';
+  msEl.innerHTML = '<span class="dot pending"></span> Testing...';
+
+  try {
+    const res = await fetch('/api/test-connections', { method: 'POST' });
+    const r = await res.json();
+    pgEl.innerHTML = r.pg.ok
+      ? '<span class="dot ok"></span> Connected'
+      : '<span class="dot fail"></span> ' + r.pg.error;
+    msEl.innerHTML = r.mssql.ok
+      ? '<span class="dot ok"></span> Connected'
+      : '<span class="dot fail"></span> ' + r.mssql.error;
+  } catch (_) {
+    pgEl.innerHTML = '<span class="dot fail"></span> Request failed';
+    msEl.innerHTML = '<span class="dot fail"></span> Request failed';
+  }
+}
+
+// ── Compare ─────────────────────────────────────────
+
+async function startCompare() {
+  document.getElementById('btn-compare').disabled = true;
+  document.getElementById('compare-status').textContent = 'Running comparison…';
+  document.getElementById('compare-status').className = 'status';
+  document.getElementById('compare-results').style.display = 'none';
+  try {
+    const res = await fetch('/api/compare', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) toast(data.error, true);
+  } catch (e) {
+    toast('Failed to start comparison', true);
+    document.getElementById('btn-compare').disabled = false;
+  }
+}
+
+function renderCompareResults(results) {
+  let totalMissing = 0, totalExtra = 0, totalChanged = 0, tablesOk = 0;
+  results.forEach(t => {
+    totalMissing += (t.missingInTarget || []).length;
+    totalExtra   += (t.extraInTarget   || []).length;
+    totalChanged += (t.fieldDiffs      || []).length;
+    if (!t.missingInTarget.length && !t.extraInTarget.length && !t.fieldDiffs.length && t.sourceCount === t.targetCount) tablesOk++;
+  });
+
+  // Summary cards
+  const sum = document.getElementById('diff-summary');
+  sum.innerHTML =
+    `<div class="diff-card ${tablesOk === results.length ? 'ok' : 'warn'}"><div class="num">${tablesOk}/${results.length}</div><div class="label">Tables Match</div></div>` +
+    `<div class="diff-card ${totalMissing ? 'bad' : 'ok'}"><div class="num">${totalMissing}</div><div class="label">Missing in Target</div></div>` +
+    `<div class="diff-card ${totalExtra ? 'warn' : 'ok'}"><div class="num">${totalExtra}</div><div class="label">Extra in Target</div></div>` +
+    `<div class="diff-card ${totalChanged ? 'warn' : 'ok'}"><div class="num">${totalChanged}</div><div class="label">Field Diffs</div></div>`;
+
+  // Per-table detail
+  const container = document.getElementById('diff-tables');
+  container.innerHTML = '';
+  results.forEach(t => {
+    const hasDiffs = t.missingInTarget.length || t.extraInTarget.length || (t.fieldDiffs && t.fieldDiffs.length) || t.sourceCount !== t.targetCount;
+    const icon = t.error ? '\u274c' : hasDiffs ? '\u26a0\ufe0f' : '\u2705';
+    const label = t.sourceTable + ' \u2192 ' + t.targetTable;
+    const section = document.createElement('div');
+    section.className = 'diff-table-section';
+
+    let html = `<h3>${icon} ${label} <span class="count">Source: ${t.sourceCount.toLocaleString()} &middot; Target: ${t.targetCount.toLocaleString()}</span></h3>`;
+
+    if (t.error) {
+      html += `<p class="diff-empty" style="color:var(--red)">Error: ${t.error}</p>`;
+    } else if (!hasDiffs) {
+      html += '<p class="diff-empty">No differences found</p>';
+    } else {
+      // Missing in target
+      if (t.missingInTarget.length) {
+        html += `<details class="diff-expand"><summary>Missing in target (${t.missingInTarget.length})</summary><div class="diff-list">`;
+        t.missingInTarget.forEach(k => { html += `<div class="removed">- Key: ${k}</div>`; });
+        html += '</div></details>';
+      }
+      // Extra in target
+      if (t.extraInTarget.length) {
+        html += `<details class="diff-expand"><summary>Extra in target (${t.extraInTarget.length})</summary><div class="diff-list">`;
+        t.extraInTarget.forEach(k => { html += `<div class="added">+ Key: ${k}</div>`; });
+        html += '</div></details>';
+      }
+      // Field diffs
+      if (t.fieldDiffs && t.fieldDiffs.length) {
+        html += `<details class="diff-expand"><summary>Field differences (${t.fieldDiffs.length})</summary><div class="diff-list">`;
+        t.fieldDiffs.forEach(d => {
+          html += `<div class="changed">\u0394 Key ${d.key} &rarr; ${d.field}: <span class="removed">${d.sourceVal}</span> \u2192 <span class="added">${d.targetVal}</span></div>`;
+        });
+        html += '</div></details>';
+      }
+    }
+
+    section.innerHTML = html;
+    container.appendChild(section);
+  });
+
+  document.getElementById('compare-results').style.display = '';
+}
+
+sse.addEventListener('compare-start', () => {
+  document.getElementById('compare-status').textContent = 'Comparing…';
+  document.getElementById('compare-status').className = 'status';
+  document.getElementById('compare-results').style.display = 'none';
+});
+
+sse.addEventListener('compare-complete', e => {
+  const { results } = JSON.parse(e.data);
+  document.getElementById('btn-compare').disabled = false;
+  document.getElementById('compare-status').textContent = 'Comparison complete';
+  document.getElementById('compare-status').className = 'status done';
+  renderCompareResults(results);
+  toast('Comparison complete');
+});
+
+sse.addEventListener('compare-error', e => {
+  const { error } = JSON.parse(e.data);
+  document.getElementById('btn-compare').disabled = false;
+  document.getElementById('compare-status').textContent = 'Error: ' + error;
+  document.getElementById('compare-status').className = 'status error';
+  toast(error, true);
+});
+</script>
+</body>
+</html>

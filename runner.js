@@ -59,6 +59,18 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
 
   log.info(`Migration starting — ${toRun.length} tables, batch size ${batchSize}, dryRun=${dryRun}`);
 
+  // Truncate all target tables to ensure clean migration (avoids duplicates on re-run)
+  if (!dryRun) {
+    log.info('Truncating target tables for clean migration...');
+    await pgPool.query(`
+      TRUNCATE breeds, pens, contacts, diseases, drugs, cost_codes, market_categories,
+               purchase_lots, cows, weighing_events, pen_movements, treatments, costs,
+               health_records, carcase_data, autopsy_records, vendor_declarations,
+               location_changes, drug_purchases, drug_disposals, legacy_raw,
+               migration_log CASCADE
+    `);
+  }
+
   for (const mapping of toRun) {
     const result = await migrateTable(mssqlPool, pgPool, mapping, {
       batchSize, log, dryRun, lookups,
@@ -70,8 +82,14 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
       lookups.breeds    = await buildLookup(pgPool, 'breeds', 'id', 'name');
       lookups.breedIdMap = await buildIdLookup(mssqlPool, pgPool, 'breeds');
     }
+    if (mapping.targetTable === 'contacts') {
+      lookups.contactIdSet = await buildIdSet(pgPool, 'contacts');
+    }
     if (mapping.targetTable === 'pens') {
       lookups.penIdMap = await buildLookup(pgPool, 'pens', 'name', 'id');
+    }
+    if (mapping.targetTable === 'drugs') {
+      lookups.drugIdSet = await buildIdSet(pgPool, 'drugs');
     }
     if (mapping.targetTable === 'purchase_lots') {
       lookups.purchLotIdMap = await buildLookup(pgPool, 'purchase_lots', 'lot_number', 'id');
@@ -223,11 +241,22 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
       }
 
       // Resolve pen_id for pen_movements
-      if (row._pen_name && lookups.penIdMap) {
-        row.pen_id = lookups.penIdMap[row._pen_name] || null;
+      if (row._pen_name !== undefined && lookups.penIdMap) {
+        const penName = row._pen_name || 'Unknown';
+        row.pen_id = lookups.penIdMap[penName] || null;
         if (!row.pen_id) {
-          skipped++;
-          continue;
+          // Auto-create missing pen
+          try {
+            const penRes = await pgPool.query(
+              'INSERT INTO pens (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id',
+              [penName]
+            );
+            row.pen_id = penRes.rows[0].id;
+            lookups.penIdMap[penName] = row.pen_id;
+          } catch (e) {
+            skipped++;
+            continue;
+          }
         }
       }
 
@@ -239,6 +268,20 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
       // Add static values
       if (staticValues) {
         Object.assign(row, staticValues);
+      }
+
+      // Sanitize FK references — set to null if referenced row doesn't exist
+      if (row.drug_id && lookups.drugIdSet && !lookups.drugIdSet.has(row.drug_id)) {
+        row.drug_id = null;
+      }
+      if (row.vendor_id && lookups.contactIdSet && !lookups.contactIdSet.has(row.vendor_id)) {
+        row.vendor_id = null;
+      }
+      if (row.agent_id && lookups.contactIdSet && !lookups.contactIdSet.has(row.agent_id)) {
+        row.agent_id = null;
+      }
+      if (row.owner_contact_id && lookups.contactIdSet && !lookups.contactIdSet.has(row.owner_contact_id)) {
+        row.owner_contact_id = null;
       }
 
       // Validate
@@ -279,12 +322,16 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         const vals = keys.map(k => clean[k]);
 
         await client.query('SAVEPOINT sp');
-        await client.query(
+        const insertResult = await client.query(
           `INSERT INTO ${targetTable} (${keys.join(', ')}) VALUES (${params.join(', ')}) ON CONFLICT DO NOTHING`,
           vals
         );
         await client.query('RELEASE SAVEPOINT sp');
-        written++;
+        if (insertResult.rowCount > 0) {
+          written++;
+        } else {
+          skipped++; // duplicate row silently skipped
+        }
       } catch (err) {
         await client.query('ROLLBACK TO SAVEPOINT sp');
         errored++;
@@ -341,6 +388,11 @@ async function buildCowIdMap(pgPool) {
     map[row.legacy_beast_id] = row.id;
   }
   return map;
+}
+
+async function buildIdSet(pgPool, table) {
+  const res = await pgPool.query(`SELECT id FROM ${table}`);
+  return new Set(res.rows.map(r => r.id));
 }
 
 // ── Migration log helper ─────────────────────────────
@@ -663,6 +715,7 @@ async function migrateRawTables(mssqlPool, pgPool, opts = {}) {
       }
 
       stats.status = 'completed';
+      log.info(`  Done: ${stats.rowsWritten} written, ${stats.rowsSkipped} skipped, ${stats.rowsErrored} errored`);
     } catch (err) {
       stats.status = 'failed';
       stats.error = err.message;
@@ -758,6 +811,199 @@ async function reconciliationReport(mssqlPool, pgPool) {
   return rows;
 }
 
+// ── Database comparison (diff) ───────────────────────
+
+/**
+ * Compare-specific key/column definitions for mapped tables.
+ * sourceKey  = SQL Server column used as unique row identifier
+ * targetKey  = PostgreSQL column corresponding to sourceKey
+ * compareCols = array of { source, target } pairs to check for data differences
+ */
+const COMPARE_DEFS = [
+  {
+    sourceTable: 'Breeds', targetTable: 'breeds',
+    sourceKey: 'Breed_Code', targetKey: 'id',
+    compareCols: [{ source: 'Breed_Name', target: 'name' }],
+  },
+  {
+    sourceTable: 'Contacts', targetTable: 'contacts',
+    sourceKey: 'Contact_ID', targetKey: 'id',
+    compareCols: [
+      { source: 'Company', target: 'company' },
+      { source: 'First_Name', target: 'first_name' },
+      { source: 'Last_Name', target: 'last_name' },
+      { source: 'Tel_No', target: 'phone' },
+      { source: 'Email', target: 'email' },
+    ],
+  },
+  {
+    sourceTable: 'Diseases', targetTable: 'diseases',
+    sourceKey: 'Disease_ID', targetKey: 'id',
+    compareCols: [
+      { source: 'Disease_Name', target: 'name' },
+      { source: 'Symptoms', target: 'symptoms' },
+    ],
+  },
+  {
+    sourceTable: 'Drugs', targetTable: 'drugs',
+    sourceKey: 'Drug_ID', targetKey: 'id',
+    compareCols: [
+      { source: 'Units', target: 'unit' },
+      { source: 'Cost_per_unit', target: 'cost_per_unit' },
+    ],
+  },
+  {
+    sourceTable: 'Cattle', targetTable: 'cows',
+    sourceKey: 'BeastID', targetKey: 'legacy_beast_id',
+    compareCols: [
+      { source: 'Ear_Tag', target: 'tag_number' },
+      { source: 'EID', target: 'eid' },
+      { source: 'Sex', target: 'sex', transform: (v) => { if (!v) return 'female'; const s = String(v).toUpperCase().trim(); return ['S','B','M'].includes(s) ? 'male' : 'female'; } },
+    ],
+  },
+  {
+    sourceTable: 'Purchase_Lots', targetTable: 'purchase_lots',
+    sourceKey: 'Lot_Number', targetKey: 'lot_number',
+    compareCols: [
+      { source: 'Number_Head', target: 'head_count' },
+      { source: 'Total_Weight', target: 'total_weight_kg' },
+    ],
+  },
+  {
+    sourceTable: 'FeedDB_Pens_File', targetTable: 'pens',
+    sourceKey: 'Pen_name', targetKey: 'name',
+    compareCols: [],
+  },
+  {
+    sourceTable: 'Cost_Codes', targetTable: 'cost_codes',
+    sourceKey: 'RevExp_Code', targetKey: 'code',
+    compareCols: [{ source: 'RevExp_Desc', target: 'description' }],
+  },
+  {
+    sourceTable: 'Market_Category', targetTable: 'market_categories',
+    sourceKey: 'Market_Cat_ID', targetKey: 'id',
+    compareCols: [{ source: 'Market_Category', target: 'name' }],
+  },
+];
+
+/**
+ * Compare source (SQL Server) and target (PostgreSQL) databases.
+ * Returns detailed diff information per table.
+ */
+async function compareDatabases(mssqlPool, pgPool) {
+  const log = createLogger('info');
+  const results = [];
+
+  log.info('Database comparison starting...');
+
+  for (const def of COMPARE_DEFS) {
+    const { sourceTable, targetTable, sourceKey, targetKey, compareCols } = def;
+    const tableResult = {
+      sourceTable,
+      targetTable,
+      sourceCount: 0,
+      targetCount: 0,
+      missingInTarget: [],   // keys in source but not in target
+      extraInTarget: [],     // keys in target but not in source
+      fieldDiffs: [],        // { key, field, sourceVal, targetVal }
+      error: null,
+    };
+
+    try {
+      log.info(`Comparing ${sourceTable} → ${targetTable}...`);
+
+      // Row counts
+      const srcCountRes = await mssqlPool.request().query(
+        `SELECT COUNT(*) AS cnt FROM [dbo].[${sourceTable}]`
+      );
+      tableResult.sourceCount = srcCountRes.recordset[0].cnt;
+
+      const tgtCountRes = await pgPool.query(`SELECT COUNT(*) AS cnt FROM ${targetTable}`);
+      tableResult.targetCount = parseInt(tgtCountRes.rows[0].cnt);
+
+      // Fetch all keys from source
+      const srcKeysRes = await mssqlPool.request().query(
+        `SELECT [${sourceKey}] AS k FROM [dbo].[${sourceTable}] WHERE [${sourceKey}] IS NOT NULL`
+      );
+      const srcKeys = new Set(srcKeysRes.recordset.map(r => String(r.k).trim()));
+
+      // Fetch all keys from target
+      const tgtKeysRes = await pgPool.query(`SELECT ${targetKey} AS k FROM ${targetTable} WHERE ${targetKey} IS NOT NULL`);
+      const tgtKeys = new Set(tgtKeysRes.rows.map(r => String(r.k).trim()));
+
+      // Missing in target (source has it, target doesn't)
+      for (const k of srcKeys) {
+        if (!tgtKeys.has(k)) tableResult.missingInTarget.push(k);
+      }
+
+      // Extra in target (target has it, source doesn't)
+      for (const k of tgtKeys) {
+        if (!srcKeys.has(k)) tableResult.extraInTarget.push(k);
+      }
+
+      // Field-level comparison for shared keys (sample up to 500 for performance)
+      if (compareCols.length > 0) {
+        const sharedKeys = [...srcKeys].filter(k => tgtKeys.has(k));
+        const sampleKeys = sharedKeys.slice(0, 500);
+
+        if (sampleKeys.length > 0) {
+          // Build source data map
+          const srcColList = [`[${sourceKey}]`, ...compareCols.map(c => `[${c.source}]`)].join(', ');
+          const srcDataRes = await mssqlPool.request().query(
+            `SELECT ${srcColList} FROM [dbo].[${sourceTable}] WHERE [${sourceKey}] IS NOT NULL`
+          );
+          const srcMap = {};
+          for (const row of srcDataRes.recordset) {
+            srcMap[String(row[sourceKey]).trim()] = row;
+          }
+
+          // Build target data map
+          const tgtColList = [targetKey, ...compareCols.map(c => c.target)].join(', ');
+          const tgtDataRes = await pgPool.query(`SELECT ${tgtColList} FROM ${targetTable} WHERE ${targetKey} IS NOT NULL`);
+          const tgtMap = {};
+          for (const row of tgtDataRes.rows) {
+            tgtMap[String(row[targetKey]).trim()] = row;
+          }
+
+          // Compare field values
+          for (const key of sampleKeys) {
+            const srcRow = srcMap[key];
+            const tgtRow = tgtMap[key];
+            if (!srcRow || !tgtRow) continue;
+
+            for (const col of compareCols) {
+              let srcVal = srcRow[col.source];
+              let tgtVal = tgtRow[col.target];
+
+              // Normalize for comparison
+              if (col.transform) srcVal = col.transform(srcVal);
+              srcVal = srcVal === null || srcVal === undefined ? '' : String(srcVal).trim();
+              tgtVal = tgtVal === null || tgtVal === undefined ? '' : String(tgtVal).trim();
+
+              if (srcVal !== tgtVal) {
+                tableResult.fieldDiffs.push({
+                  key, field: col.target, sourceVal: srcVal, targetVal: tgtVal,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      const totalDiffs = tableResult.missingInTarget.length + tableResult.extraInTarget.length + tableResult.fieldDiffs.length;
+      log.info(`  ${sourceTable}: counts ${tableResult.sourceCount}/${tableResult.targetCount}, diffs: ${totalDiffs}`);
+    } catch (err) {
+      tableResult.error = err.message;
+      log.error(`  ${sourceTable}: ${err.message}`);
+    }
+
+    results.push(tableResult);
+  }
+
+  log.info('Comparison complete.');
+  return results;
+}
+
 module.exports = {
   runMigration,
   migrateTable,
@@ -766,6 +1012,7 @@ module.exports = {
   preFlightAudit,
   migrateRawTables,
   reconciliationReport,
+  compareDatabases,
   buildLookup,
   buildCowIdMap,
   createLogger,
