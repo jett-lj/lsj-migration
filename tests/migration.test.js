@@ -233,8 +233,16 @@ describe('Transform helpers', () => {
       expect(deriveCowStatus({ Died: false, Sale_Date: new Date(), Date_Archived: null })).toBe('sold');
     });
 
+    it('returns active when Sale_Date is sentinel 1900-01-01', () => {
+      expect(deriveCowStatus({ Died: false, Sale_Date: new Date('1900-01-01'), Date_Archived: null })).toBe('active');
+    });
+
     it('returns archived when Date_Archived is present', () => {
       expect(deriveCowStatus({ Died: false, Sale_Date: null, Date_Archived: new Date() })).toBe('archived');
+    });
+
+    it('returns active when Date_Archived is sentinel 1900-01-01', () => {
+      expect(deriveCowStatus({ Died: false, Sale_Date: null, Date_Archived: new Date('1900-01-01') })).toBe('active');
     });
 
     it('returns active by default', () => {
@@ -545,7 +553,7 @@ describe('Migration runner — integration', () => {
         ],
         'Drugs_Given': [
           { BeastID: 100, Drug_ID: 1, Units_Given: 2.5, Date_Given: '2024-01-16',
-            Withold_Until: '2024-02-15', SB_Rec_No: null, User_Initials: 'JB', ID: 1 },
+            Withold_Until: '2024-02-15', SB_Rec_No: 1, User_Initials: 'JB', ID: 1 },
         ],
         'Costs': [
           { BeastID: 100, RevExp_Code: 1, Trans_Date: '2024-01-15',
@@ -589,19 +597,21 @@ describe('Migration runner — integration', () => {
       expect(weights.rows[0].weigh_type).toBe('intake');
       expect(weights.rows[0].weight_kg).toBe(300);
 
-      const treatments = await pgPool.query('SELECT * FROM treatments');
-      expect(treatments.rows.length).toBeGreaterThanOrEqual(1);
-      if (treatments.rows.length > 0) {
-        expect(treatments.rows[0].dose).toBe(2.5);
-      }
-
-      const movements = await pgPool.query('SELECT * FROM pen_movements');
-      expect(movements.rows).toHaveLength(1);
-
       const healthRecs = await pgPool.query('SELECT * FROM health_records');
       expect(healthRecs.rows).toHaveLength(1);
       expect(healthRecs.rows[0].type).toBe('treatment');
       expect(healthRecs.rows[0].description).toBe('Coughing');
+
+      const treatments = await pgPool.query('SELECT * FROM treatments');
+      expect(treatments.rows.length).toBeGreaterThanOrEqual(1);
+      if (treatments.rows.length > 0) {
+        expect(treatments.rows[0].dose).toBe(2.5);
+        // treatment → health_record link via SB_Rec_No
+        expect(treatments.rows[0].health_record_id).toBe(healthRecs.rows[0].id);
+      }
+
+      const movements = await pgPool.query('SELECT * FROM pen_movements');
+      expect(movements.rows).toHaveLength(1);
     });
 
     it('handles dead cattle status correctly', async () => {
@@ -747,6 +757,47 @@ describe('Migration runner — integration', () => {
       const diseases = await pgPool.query('SELECT COUNT(*) AS cnt FROM diseases');
       expect(parseInt(diseases.rows[0].cnt)).toBe(0);
     });
+
+    it('does not truncate unrelated tables during selective migration', async () => {
+      // Seed diseases first via full migration
+      const seedMock = createMockMssql({
+        'Breeds': [{ Breed_Code: 1, Breed_Name: 'Angus' }],
+        'FeedDB_Pens_File': [],
+        'Contacts': [],
+        'Diseases': [{ Disease_ID: 1, Disease_Name: 'BRD', Symptoms: null, Treatment: null, No_longer_used: false }],
+        'Drugs': [],
+        'Cost_Codes': [],
+        'Market_Category': [],
+        'Purchase_Lots': [],
+        'Cattle': [],
+        'Weighing_Events': [],
+        'PensHistory': [],
+        'Drugs_Given': [],
+        'Costs': [],
+        'Sick_Beast_Records': [],
+        'Carcase_data': [],
+        'Autopsy_Records': [],
+        'Vendor_Declarations': [],
+        'Location_Changes': [],
+        'Drugs_Purchased': [],
+        'Drug_Disposal': [],
+      });
+      await runMigration(seedMock, pgPool, { batchSize: 100, logLevel: 'error' });
+
+      // Now run selective migration for breeds only
+      const selectiveMock = createMockMssql({
+        'Breeds': [{ Breed_Code: 2, Breed_Name: 'Hereford' }],
+      });
+      await runMigration(selectiveMock, pgPool, {
+        batchSize: 100,
+        logLevel: 'error',
+        tables: ['Breeds'],
+      });
+
+      // Diseases should still have data (not truncated)
+      const diseases = await pgPool.query('SELECT COUNT(*) AS cnt FROM diseases');
+      expect(parseInt(diseases.rows[0].cnt)).toBe(1);
+    });
   });
 
   describe('Migration logging', () => {
@@ -808,10 +859,283 @@ describe('Migration runner — integration', () => {
       expect(parseInt(res.rows[0].cnt)).toBe(1);
     });
   });
+
+  describe('Costs migration', () => {
+    it('migrates cost_codes with correct revenue/expense type', async () => {
+      const mock = createMockMssql({
+        'Cost_Codes': [
+          { RevExp_Code: 1, RevExp_Desc: 'Feed',         Rev_Exp: 'E' },
+          { RevExp_Code: 2, RevExp_Desc: 'Sale Revenue', Rev_Exp: 'R' },
+          { RevExp_Code: 3, RevExp_Desc: 'Vet',          Rev_Exp: 'e' },
+        ],
+      });
+
+      const mapping = mappings.find(m => m.sourceTable === 'Cost_Codes');
+      const result = await migrateTable(mock, pgPool, mapping, {
+        batchSize: 100, log: createLogger('error'), dryRun: false, lookups: {},
+      });
+
+      expect(result.rowsWritten).toBe(3);
+      const rows = await pgPool.query('SELECT code, type FROM cost_codes ORDER BY code');
+      expect(rows.rows[0]).toMatchObject({ code: 1, type: 'expense' });
+      expect(rows.rows[1]).toMatchObject({ code: 2, type: 'revenue' });
+      expect(rows.rows[2]).toMatchObject({ code: 3, type: 'expense' });
+    });
+
+    it('resolves cost_code_id when migrating costs rows', async () => {
+      const mock = createMockMssql({
+        'Breeds': [{ Breed_Code: 1, Breed_Name: 'Angus' }],
+        'FeedDB_Pens_File': [],
+        'Contacts': [],
+        'Diseases': [],
+        'Drugs': [],
+        'Cost_Codes': [
+          { RevExp_Code: 10, RevExp_Desc: 'Feed', Rev_Exp: 'E' },
+        ],
+        'Market_Category': [],
+        'Purchase_Lots': [],
+        'Cattle': [
+          { BeastID: 501, Ear_Tag: 'COST001', EID: null, Breed: 1, Sex: 'S', HGP: false,
+            Died: false, Start_Date: null, Start_Weight: null,
+            Sale_Date: null, Sale_Weight: null, DOB: null,
+            Feedlot_Entry_Date: '2024-01-01', Feedlot_Entry_Wght: 300,
+            Pen_Number: null, Notes: null, Purch_Lot_No: null, Date_Archived: null },
+        ],
+        'Weighing_Events': [],
+        'PensHistory': [],
+        'Drugs_Given': [],
+        'Costs': [
+          { BeastID: 501, RevExp_Code: 10, Trans_Date: '2024-02-01',
+            Rev_Exp_per_Unit: 5.00, Units: 50, Extended_RevExp: 250.00, ID: 1 },
+        ],
+        'Sick_Beast_Records': [],
+        'Carcase_data': [],
+        'Autopsy_Records': [],
+        'Vendor_Declarations': [],
+        'Location_Changes': [],
+        'Drugs_Purchased': [],
+        'Drug_Disposal': [],
+      });
+
+      await runMigration(mock, pgPool, { batchSize: 100, logLevel: 'error', dryRun: false });
+
+      const costs = await pgPool.query('SELECT * FROM costs');
+      expect(costs.rows).toHaveLength(1);
+      expect(costs.rows[0].amount).toBe(250);
+      expect(costs.rows[0].units).toBe(50);
+
+      // cost_code_id must be resolved — never null
+      const ccRes = await pgPool.query('SELECT id FROM cost_codes WHERE code = 10');
+      expect(costs.rows[0].cost_code_id).toBe(ccRes.rows[0].id);
+    });
+
+    it('skips costs rows with null amount', async () => {
+      const cowRes = await pgPool.query('SELECT id, legacy_beast_id FROM cows LIMIT 1');
+      if (cowRes.rows.length === 0) {
+        // Seed a minimal cow so the test can run standalone
+        await pgPool.query("INSERT INTO breeds (name) VALUES ('Test') ON CONFLICT DO NOTHING");
+        await pgPool.query(`
+          INSERT INTO cows (tag_number, breed, legacy_beast_id, status, sex)
+          VALUES ('NULL_AMT', 'Test', 88001, 'active', 'female')
+        `);
+      }
+      const cow = (await pgPool.query('SELECT id, legacy_beast_id FROM cows WHERE legacy_beast_id = 88001')).rows[0]
+                || (await pgPool.query('SELECT id, legacy_beast_id FROM cows LIMIT 1')).rows[0];
+
+      const mock = createMockMssql({
+        'Costs': [
+          { BeastID: cow.legacy_beast_id, RevExp_Code: 99, Trans_Date: '2024-01-01',
+            Rev_Exp_per_Unit: null, Units: 1, Extended_RevExp: null, ID: 99 },
+        ],
+      });
+
+      const mapping = mappings.find(m => m.sourceTable === 'Costs');
+      const result = await migrateTable(mock, pgPool, mapping, {
+        batchSize: 100, log: createLogger('error'), dryRun: false,
+        lookups: { cowIdMap: { [cow.legacy_beast_id]: cow.id } },
+      });
+
+      expect(result.rowsSkipped).toBe(1);
+      expect(result.rowsWritten).toBe(0);
+    });
+
+    it('skips costs rows when cow_id cannot be resolved', async () => {
+      const mock = createMockMssql({
+        'Costs': [
+          { BeastID: 99999, RevExp_Code: 1, Trans_Date: '2024-01-15',
+            Rev_Exp_per_Unit: 10, Units: 5, Extended_RevExp: 50, ID: 77 },
+        ],
+      });
+
+      const mapping = mappings.find(m => m.sourceTable === 'Costs');
+      const result = await migrateTable(mock, pgPool, mapping, {
+        batchSize: 100, log: createLogger('error'), dryRun: false,
+        lookups: { cowIdMap: {} },
+      });
+
+      expect(result.rowsSkipped).toBe(1);
+      expect(result.rowsWritten).toBe(0);
+    });
+  });
+});
+
+
+// ══════════════════════════════════════════════════════
+// 4. DRUG PURCHASE / DISPOSAL TESTS
+// ══════════════════════════════════════════════════════
+
+describe('Drug purchases and disposals migration', () => {
+  beforeEach(async () => {
+    await pgPool.query('DELETE FROM drug_purchases');
+    await pgPool.query('DELETE FROM drug_disposals');
+    await pgPool.query('DELETE FROM drugs');
+  });
+
+  describe('Drug purchases', () => {
+    it('migrates drug purchases with cost and purchase_date', async () => {
+      await pgPool.query(`INSERT INTO drugs (id, name, unit, cost_per_unit, withhold_days, esi_days)
+                          VALUES (1, 'Draxxin', 'mL', 5.50, 30, 42)
+                          ON CONFLICT DO NOTHING`);
+
+      const mock = createMockMssql({
+        'Drugs_Purchased': [
+          { DrugID: 1, Quantity_received: 100, Purchase_Date: '2024-03-01',
+            Batch_number: 'B001', Expiry_date: '2025-06-01', Drug_cost: 550.00, ID: 1 },
+          { DrugID: 1, Quantity_received: 50,  Purchase_Date: '2024-06-15',
+            Batch_number: 'B002', Expiry_date: '2025-12-01', Drug_cost: 275.00, ID: 2 },
+        ],
+      });
+
+      const mapping = mappings.find(m => m.sourceTable === 'Drugs_Purchased');
+      const result = await migrateTable(mock, pgPool, mapping, {
+        batchSize: 100, log: createLogger('error'), dryRun: false,
+        lookups: { drugIdSet: new Set([1]) },
+      });
+
+      expect(result.rowsWritten).toBe(2);
+      expect(result.rowsErrored).toBe(0);
+
+      const rows = await pgPool.query('SELECT * FROM drug_purchases ORDER BY id');
+      expect(rows.rows).toHaveLength(2);
+      expect(rows.rows[0].drug_id).toBe(1);
+      expect(rows.rows[0].quantity).toBe(100);
+      expect(rows.rows[0].purchase_date).not.toBeNull();
+      expect(rows.rows[0].cost).toBe(550);
+      expect(rows.rows[0].batch_number).toBe('B001');
+      expect(rows.rows[1].cost).toBe(275);
+    });
+
+    it('nulls drug_id when drug does not exist in lookup', async () => {
+      const mock = createMockMssql({
+        'Drugs_Purchased': [
+          { DrugID: 9999, Quantity_received: 10, Purchase_Date: '2024-01-01',
+            Batch_number: null, Expiry_date: null, Drug_cost: 100.00, ID: 3 },
+        ],
+      });
+
+      const mapping = mappings.find(m => m.sourceTable === 'Drugs_Purchased');
+      await migrateTable(mock, pgPool, mapping, {
+        batchSize: 100, log: createLogger('error'), dryRun: false,
+        lookups: { drugIdSet: new Set() },
+      });
+
+      const rows = await pgPool.query('SELECT drug_id, cost FROM drug_purchases ORDER BY id DESC LIMIT 1');
+      expect(rows.rows[0].drug_id).toBeNull(); // sanitized to null
+      expect(rows.rows[0].cost).toBe(100);     // cost still preserved
+    });
+
+    it('preserves null cost values without zeroing', async () => {
+      await pgPool.query(`INSERT INTO drugs (id, name, unit, cost_per_unit, withhold_days, esi_days)
+                          VALUES (1, 'Draxxin', 'mL', 5.50, 30, 42)
+                          ON CONFLICT DO NOTHING`);
+
+      const mock = createMockMssql({
+        'Drugs_Purchased': [
+          { DrugID: 1, Quantity_received: 20, Purchase_Date: '2024-01-01',
+            Batch_number: 'B003', Expiry_date: null, Drug_cost: null, ID: 4 },
+        ],
+      });
+
+      const mapping = mappings.find(m => m.sourceTable === 'Drugs_Purchased');
+      await migrateTable(mock, pgPool, mapping, {
+        batchSize: 100, log: createLogger('error'), dryRun: false,
+        lookups: { drugIdSet: new Set([1]) },
+      });
+
+      const rows = await pgPool.query('SELECT cost FROM drug_purchases ORDER BY id DESC LIMIT 1');
+      expect(rows.rows[0].cost).toBeNull(); // null, never coerced to 0
+    });
+  });
+
+  describe('Drug disposals', () => {
+    it('migrates drug disposals with all fields', async () => {
+      await pgPool.query(`INSERT INTO drugs (id, name, unit, cost_per_unit, withhold_days, esi_days)
+                          VALUES (2, 'Metacam', 'mL', 3.20, 0, 0)
+                          ON CONFLICT DO NOTHING`);
+
+      const mock = createMockMssql({
+        'Drug_Disposal': [
+          { DrugID: 2, Number_disposed: 15, Date_disposed: '2024-04-10',
+            Disposal_reason: 'Expired', Disposal_method: 'Incineration',
+            Disposed_by: 'JB', Notes: 'batch expired', Disposal_ID: 1 },
+        ],
+      });
+
+      const mapping = mappings.find(m => m.sourceTable === 'Drug_Disposal');
+      const result = await migrateTable(mock, pgPool, mapping, {
+        batchSize: 100, log: createLogger('error'), dryRun: false,
+        lookups: { drugIdSet: new Set([2]) },
+      });
+
+      expect(result.rowsWritten).toBe(1);
+
+      const rows = await pgPool.query('SELECT * FROM drug_disposals');
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0].drug_id).toBe(2);
+      expect(rows.rows[0].quantity).toBe(15);
+      expect(rows.rows[0].disposal_reason).toBe('Expired');
+      expect(rows.rows[0].disposal_method).toBe('Incineration');
+      expect(rows.rows[0].disposed_by).toBe('JB');
+    });
+  });
+
+  describe('Drug cost_per_unit fidelity', () => {
+    it('migrates cost_per_unit as-is without zeroing nulls', async () => {
+      const mock = createMockMssql({
+        'Drugs': [
+          { Drug_ID: 10, Drug_Name: 'Vetdrug A', Units: 'mL', Cost_per_unit: 12.75,
+            WithHold_days_1: 7, WithHold_days_ESI: 14, HGP: 'N', Antibiotic: 'N',
+            Supplier: 'VetCo', Inactive: false },
+          { Drug_ID: 11, Drug_Name: 'Vetdrug B', Units: 'tab', Cost_per_unit: null,
+            WithHold_days_1: 0, WithHold_days_ESI: 0, HGP: 'N', Antibiotic: 'N',
+            Supplier: null, Inactive: false },
+          { Drug_ID: 12, Drug_Name: 'Vetdrug C', Units: 'mL', Cost_per_unit: 0,
+            WithHold_days_1: 0, WithHold_days_ESI: 0, HGP: 'N', Antibiotic: 'N',
+            Supplier: null, Inactive: false },
+        ],
+      });
+
+      const mapping = mappings.find(m => m.sourceTable === 'Drugs');
+      const result = await migrateTable(mock, pgPool, mapping, {
+        batchSize: 100, log: createLogger('error'), dryRun: false, lookups: {},
+      });
+
+      expect(result.rowsWritten).toBe(3);
+
+      const a = await pgPool.query('SELECT cost_per_unit FROM drugs WHERE id = 10');
+      expect(a.rows[0].cost_per_unit).toBe(12.75); // exact value preserved
+
+      const b = await pgPool.query('SELECT cost_per_unit FROM drugs WHERE id = 11');
+      expect(b.rows[0].cost_per_unit).toBeNull();  // null stays null, not zeroed
+
+      const c = await pgPool.query('SELECT cost_per_unit FROM drugs WHERE id = 12');
+      expect(c.rows[0].cost_per_unit).toBe(0);     // explicit 0 kept as 0
+    });
+  });
 });
 
 // ══════════════════════════════════════════════════════
-// 4. VALIDATION TESTS
+// 5. VALIDATION TESTS
 // ══════════════════════════════════════════════════════
 
 describe('Post-migration validation', () => {
@@ -899,17 +1223,11 @@ describe('Post-migration validation', () => {
     const cowRes = await pgPool.query("SELECT id FROM cows WHERE tag_number = 'NEG001'");
     const cowId = cowRes.rows[0].id;
 
-    await pgPool.query(`
+    // CHECK(weight_kg >= 0) prevents negative weights at the DB level
+    await expect(pgPool.query(`
       INSERT INTO weighing_events (cow_id, weigh_type, weight_kg, weighed_at)
       VALUES ($1, 'intake', -50, NOW())
-    `, [cowId]);
-
-    const mock = createMockMssql({});
-    mock.request = () => ({ async query() { return { recordset: [{ cnt: 0 }] }; } });
-
-    const checks = await validateMigration(mock, pgPool);
-    const negCheck = checks.find(c => c.check.includes('negative weights'));
-    expect(negCheck.passed).toBe(false);
+    `, [cowId])).rejects.toThrow(/check/i);
   });
 });
 
@@ -1118,9 +1436,8 @@ describe('Schema integrity', () => {
     const hasFk = (table, col, ref) =>
       fks.some(f => f.table_name === table && f.column_name === col && f.foreign_table === ref);
 
-    expect(hasFk('cows', 'herd_id', 'herds')).toBe(true);
     expect(hasFk('cows', 'pen_id', 'pens')).toBe(true);
-    expect(hasFk('cows', 'breed_id', 'breeds')).toBe(true);
+    expect(hasFk('cows', 'purchase_lot_id', 'purchase_lots')).toBe(true);
     expect(hasFk('weighing_events', 'cow_id', 'cows')).toBe(true);
     expect(hasFk('treatments', 'cow_id', 'cows')).toBe(true);
     expect(hasFk('treatments', 'drug_id', 'drugs')).toBe(true);

@@ -31,7 +31,10 @@ let sseClients = [];
 
 function broadcast(event, data) {
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  sseClients.forEach(res => res.write(msg));
+  sseClients = sseClients.filter(res => {
+    try { res.write(msg); return true; }
+    catch (_) { return false; }
+  });
 }
 
 // ── SSE endpoint ────────────────────────────────────
@@ -263,12 +266,12 @@ app.post('/api/migrate', async (req, res) => {
   if (migrationRunning) return res.status(409).json({ error: 'Migration already running' });
 
   const { dryRun = false } = req.body || {};
-  migrationRunning = true;
   broadcast('migration-start', { dryRun });
   broadcast('status', { step: dryRun ? 'Starting preview (dry-run)...' : 'Connecting...' });
 
   // Respond immediately — progress goes via SSE
   res.json({ started: true, dryRun });
+  migrationRunning = true;
 
   const restore = interceptConsole();
 

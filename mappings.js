@@ -60,8 +60,10 @@ function mapSex(v) {
 /** Derive cow status from legacy flags */
 function deriveCowStatus(row) {
   if (toBool(row.Died)) return 'died';
-  if (row.Sale_Date) return 'sold';
-  if (row.Date_Archived) return 'archived';
+  const saleDate = toDate(row.Sale_Date);
+  if (saleDate && saleDate > '1901-01-01') return 'sold';
+  const archDate = toDate(row.Date_Archived);
+  if (archDate && archDate > '1901-01-01') return 'archived';
   return 'active';
 }
 
@@ -166,8 +168,8 @@ const mappings = [
       { source: 'Drug_Name',       target: 'name',          transform: trimOrNull },
       { source: 'Units',           target: 'unit',           transform: trimOrNull },
       { source: 'Cost_per_unit',   target: 'cost_per_unit',  transform: toNum },
-      { source: 'WithHold_days_1', target: 'withhold_days',  transform: (v) => toNum(v) || 0 },
-      { source: 'WithHold_days_ESI', target: 'esi_days',     transform: (v) => toNum(v) || 0 },
+      { source: 'WithHold_days_1', target: 'withhold_days',  transform: toNum },
+      { source: 'WithHold_days_ESI', target: 'esi_days',     transform: toNum },
       { source: 'HGP',             target: 'is_hgp',         transform: toBool },
       { source: 'Antibiotic',      target: 'is_antibiotic',   transform: toBool },
       { source: 'Supplier',        target: 'supplier',        transform: trimOrNull },
@@ -249,13 +251,16 @@ const mappings = [
             ORDER BY BeastID`,
     columns: [
       { source: 'BeastID',             target: 'legacy_beast_id' },
-      { source: 'Ear_Tag',             target: 'tag_number',      transform: trimOrNull },
+      { source: 'Ear_Tag',             target: 'tag_number',      transform: (v) => trimOrNull(v) || 'UNKNOWN' },
       { source: 'EID',                 target: 'eid',              transform: trimOrNull },
       { source: 'Sex',                 target: 'sex',              transform: mapSex },
       { source: 'HGP',                 target: 'hgp',              transform: toBool },
       { source: 'Feedlot_Entry_Date',  target: 'entry_date',       transform: toDate },
       { source: 'Feedlot_Entry_Wght',  target: 'entry_weight_kg',  transform: toNum },
-      { source: 'Sale_Date',           target: 'sale_date',         transform: toDate },
+      { source: 'Sale_Date',           target: 'sale_date',         transform: (v) => { const d = toDate(v); return d && d > '1901-01-01' ? d : null; } },
+      { source: 'DOB',                 target: 'dob',               transform: toDate },
+      { source: 'Start_Date',           target: 'start_date',        transform: toDate },
+      { source: 'Start_Weight',         target: 'start_weight_kg',   transform: toNum },
       { source: 'Sale_Weight',         target: 'sale_weight_kg',    transform: toNum },
       { source: 'Notes',               target: 'notes',             transform: trimOrNull },
       { source: 'Purch_Lot_No',        target: '_purch_lot_no',     transform: trimOrNull }, // resolved in post-processing
@@ -292,6 +297,9 @@ const mappings = [
       status:          row._status,
       entry_date:      row.entry_date,
       entry_weight_kg: row.entry_weight_kg,
+      dob:             row.dob,
+      start_date:      row.start_date,
+      start_weight_kg: row.start_weight_kg,
       sale_date:       row.sale_date,
       sale_weight_kg:  row.sale_weight_kg,
       notes:           row.notes,
@@ -312,7 +320,7 @@ const mappings = [
       { source: 'BeastID',       target: '_beast_id' },        // resolved to cow_id
       { source: 'Weighing_Type', target: 'weigh_type', transform: mapWeighType },
       { source: 'Weigh_date',    target: 'weighed_at', transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
-      { source: 'Weight',        target: 'weight_kg',  transform: (v) => { const n = toNum(v); return n !== null ? n : 0; } },
+      { source: 'Weight',        target: 'weight_kg',  transform: toNum },
       { source: 'P8_Fat',        target: 'p8_fat',     transform: toNum },
       { source: 'Weigh_Note',    target: 'notes',      transform: trimOrNull },
     ],
@@ -348,6 +356,7 @@ const mappings = [
       { source: 'Units_Given',    target: 'dose',            transform: toNum },
       { source: 'Date_Given',     target: 'administered_at', transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
       { source: 'Withold_Until',  target: 'withhold_until',  transform: toDate },
+      { source: 'SB_Rec_No',       target: '_sb_rec_no',      transform: toFkId },
       { source: 'User_Initials',  target: 'administered_by', transform: trimOrNull },
     ],
     requiresLookup: 'cowIdMap',
@@ -365,26 +374,39 @@ const mappings = [
       { source: 'RevExp_Code',   target: '_cost_code' },
       { source: 'Trans_Date',    target: 'trans_date',   transform: toDate },
       { source: 'Rev_Exp_per_Unit', target: '_unit_cost', transform: toNum },
-      { source: 'Units',         target: 'units',        transform: toNum },
+      { source: 'Units',         target: 'units',        transform: (v) => toNum(v) ?? 1 },
       { source: 'Extended_RevExp', target: 'amount',     transform: toNum },
     ],
     requiresLookup: 'cowIdMap',
     validate: (row) => row.amount !== null,
+    buildInsertValues: (row) => ({
+      cow_id:       row.cow_id,
+      cost_code_id: row.cost_code_id,
+      trans_date:   row.trans_date,
+      unit_cost:    row._unit_cost,
+      units:        row.units,
+      amount:       row.amount,
+    }),
   },
 
   {
-    order: 40,
+    order: 39,
     sourceTable: 'Sick_Beast_Records',
     targetTable: 'health_records',
     query: `SELECT Beast_ID, Ear_Tag_No, Date_Diagnosed, Disease_ID,
-                   Diagnosed_By, Sick_Beast_Notes, Date_Recovered_Died, Result_Code
+                   Diagnosed_By, Sick_Beast_Notes, Date_Recovered_Died, Result_Code,
+                   SB_Rec_No
             FROM dbo.Sick_Beast_Records
             ORDER BY SB_Rec_No`,
     columns: [
       { source: 'Beast_ID',          target: '_beast_id' },
+      { source: 'SB_Rec_No',         target: 'legacy_sb_rec_no' },
       { source: 'Date_Diagnosed',    target: 'date',        transform: toDate },
+      { source: 'Disease_ID',        target: 'disease_id',  transform: toFkId },
       { source: 'Diagnosed_By',      target: 'vet_name',    transform: trimOrNull },
       { source: 'Sick_Beast_Notes',  target: 'description', transform: (v) => trimOrNull(v) || 'Sick beast record' },
+      { source: 'Date_Recovered_Died', target: 'date_recovered', transform: toDate },
+      { source: 'Result_Code',       target: 'result_code', transform: trimOrNull },
     ],
     requiresLookup: 'cowIdMap',
     // Fixed type since these are all treatment-type health records from the sick beast system
@@ -614,15 +636,16 @@ const mappings = [
     order: 50,
     sourceTable: 'Drugs_Purchased',
     targetTable: 'drug_purchases',
-    query: `SELECT DrugID, Quantity_received, Batch_number, Expiry_date, Drug_cost
+    query: `SELECT DrugID, Quantity_received, Purchase_Date, Batch_number, Expiry_date, Drug_cost
             FROM dbo.Drugs_Purchased
             ORDER BY ID`,
     columns: [
-      { source: 'DrugID',            target: 'drug_id',      transform: toFkId },
-      { source: 'Quantity_received',  target: 'quantity',     transform: toNum },
-      { source: 'Batch_number',      target: 'batch_number', transform: trimOrNull },
-      { source: 'Expiry_date',       target: 'expiry_date',  transform: toDate },
-      { source: 'Drug_cost',         target: 'cost',         transform: toNum },
+      { source: 'DrugID',            target: 'drug_id',       transform: toFkId },
+      { source: 'Quantity_received',  target: 'quantity',      transform: toNum },
+      { source: 'Purchase_Date',     target: 'purchase_date', transform: toDate },
+      { source: 'Batch_number',      target: 'batch_number',  transform: trimOrNull },
+      { source: 'Expiry_date',       target: 'expiry_date',   transform: toDate },
+      { source: 'Drug_cost',         target: 'cost',          transform: toNum },
     ],
   },
 
