@@ -243,12 +243,24 @@ const mappings = [
     order: 30,
     sourceTable: 'Cattle',
     targetTable: 'cows',
-    query: `SELECT BeastID, Ear_Tag, EID, Breed, Sex, HGP, Died,
+    query: `;WITH ranked AS (
+              SELECT BeastID, Ear_Tag, EID, Breed, Sex, HGP, Died,
+                     Start_Date, Start_Weight, Sale_Date, Sale_Weight,
+                     DOB, Feedlot_Entry_Date, Feedlot_Entry_Wght,
+                     Pen_Number, Notes, Purch_Lot_No, Date_Archived,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY BeastID
+                       ORDER BY Feedlot_Entry_Date DESC, Start_Date DESC
+                     ) AS _rn
+              FROM dbo.Cattle
+            )
+            SELECT BeastID, Ear_Tag, EID, Breed, Sex, HGP, Died,
                    Start_Date, Start_Weight, Sale_Date, Sale_Weight,
                    DOB, Feedlot_Entry_Date, Feedlot_Entry_Wght,
                    Pen_Number, Notes, Purch_Lot_No, Date_Archived
-            FROM dbo.Cattle
+            FROM ranked WHERE _rn = 1
             ORDER BY BeastID`,
+    countQuery: `SELECT COUNT(DISTINCT BeastID) AS cnt FROM dbo.Cattle`,
     columns: [
       { source: 'BeastID',             target: 'legacy_beast_id' },
       { source: 'Ear_Tag',             target: 'tag_number',      transform: (v) => trimOrNull(v) || 'UNKNOWN' },
@@ -612,31 +624,10 @@ const mappings = [
 
   {
     order: 50,
-    sourceTable: 'Location_Changes',
-    targetTable: 'location_changes',
-    query: `SELECT BeastID, Ear_Tag, EID, Movement_Date,
-                   From_location, To_Location, New_animal, Slaughtered
-            FROM dbo.Location_Changes
-            ORDER BY ID`,
-    columns: [
-      { source: 'BeastID',       target: '_beast_id' },
-      { source: 'BeastID',       target: 'legacy_beast_id' },
-      { source: 'Ear_Tag',       target: 'ear_tag',         transform: trimOrNull },
-      { source: 'EID',           target: 'eid',             transform: trimOrNull },
-      { source: 'Movement_Date', target: 'movement_date',   transform: toDate },
-      { source: 'From_location', target: 'from_location',   transform: trimOrNull },
-      { source: 'To_Location',   target: 'to_location',     transform: trimOrNull },
-      { source: 'New_animal',    target: 'is_new_animal',   transform: toBool },
-      { source: 'Slaughtered',   target: 'is_slaughtered',  transform: toBool },
-    ],
-    requiresLookup: 'cowIdMap',
-  },
-
-  {
-    order: 50,
     sourceTable: 'Drugs_Purchased',
     targetTable: 'drug_purchases',
-    query: `SELECT DrugID, Quantity_received, Purchase_Date, Batch_number, Expiry_date, Drug_cost
+    // Source table has no Purchase_Date column (actual PK: Receival_ID); select NULL to keep mapping intact
+    query: `SELECT DrugID, Quantity_received, NULL AS Purchase_Date, Batch_number, Expiry_date, Drug_cost
             FROM dbo.Drugs_Purchased
             ORDER BY ID`,
     columns: [

@@ -7,7 +7,7 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#fafafa;--fg:#1a1a1a;--muted:#888;--border:#e0e0e0;--accent:#111;--accent-light:#f0f0f0;--green:#2d7d46;--red:#c0392b;--bar:#111;--bar-bg:#e5e5e5;--radius:6px}
-body{font-family:-apple-system,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);line-height:1.5;min-height:100vh}
+body{font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);line-height:1.5;min-height:100vh}
 a{color:var(--fg);text-decoration:none}
 
 /* ── Nav ─────────────────────────────── */
@@ -21,7 +21,8 @@ nav .links a.active{font-weight:600}
 /* ── Layout ──────────────────────────── */
 .page{max-width:640px;margin:0 auto;padding:3rem 1.5rem}
 h1{font-size:1.5rem;font-weight:700;margin-bottom:.25rem;letter-spacing:-.03em}
-.subtitle{font-size:.875rem;color:var(--muted);margin-bottom:2.5rem}
+.subtitle{font-size:.875rem;color:var(--muted);margin-bottom:.375rem}
+.optim-pill{font-size:.75rem;color:var(--muted);margin-bottom:2.5rem;display:flex;flex-wrap:wrap;gap:.375rem 1.25rem;}
 
 /* ── Buttons ─────────────────────────── */
 .btn{display:inline-flex;align-items:center;gap:.5rem;padding:.625rem 1.25rem;font-size:.875rem;font-weight:600;border:none;border-radius:var(--radius);cursor:pointer;transition:background .15s,opacity .15s}
@@ -38,6 +39,7 @@ h1{font-size:1.5rem;font-weight:700;margin-bottom:.25rem;letter-spacing:-.03em}
 .progress-label{display:flex;justify-content:space-between;font-size:.8rem;color:var(--muted);margin-bottom:.375rem}
 .progress-bar{height:6px;background:var(--bar-bg);border-radius:3px;overflow:hidden}
 .progress-bar .fill{height:100%;width:0%;background:var(--bar);border-radius:3px;transition:width .3s ease}
+
 /* ── Overall progress ───────────── */
 .overall-progress{margin-bottom:1.5rem;display:none}
 .overall-progress.visible{display:block}
@@ -48,6 +50,7 @@ h1{font-size:1.5rem;font-weight:700;margin-bottom:.25rem;letter-spacing:-.03em}
 .overall-bar .fill{height:100%;width:0%;background:linear-gradient(90deg,var(--green),#4caf50);border-radius:5px;transition:width .4s ease}
 .overall-stats{display:flex;gap:1.5rem;margin-top:.5rem;font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .overall-stats span{display:flex;align-items:center;gap:.25rem}
+
 /* ── Status ──────────────────────────── */
 .status{font-size:.875rem;color:var(--muted);margin-bottom:1.5rem;min-height:1.3em;transition:color .2s}
 .status.error{color:var(--red)}
@@ -90,6 +93,15 @@ tr:last-child td{border-bottom:none}
 .field-action .field{flex:1;margin-bottom:0}
 .field-action .btn{flex-shrink:0;white-space:nowrap}
 .create-db-result{font-size:.8rem;margin-top:.375rem;display:flex;align-items:center;gap:.375rem}
+/* ── DB autocomplete ─────────────────── */
+.db-wrap{position:relative}
+.db-dropdown{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:180px;overflow-y:auto;z-index:50;display:none}
+.db-dropdown.open{display:block}
+.db-dropdown li{list-style:none;padding:.4rem .625rem;font-size:.875rem;cursor:pointer;border-bottom:1px solid var(--border)}
+.db-dropdown li:last-child{border-bottom:none}
+.db-dropdown li:hover,.db-dropdown li.active{background:var(--accent-light)}
+.db-dropdown li.existing{color:var(--fg)}
+.db-dropdown li.new-entry{color:var(--muted);font-style:italic}
 
 /* ── Connection test ─────────────────── */
 .conn-result{font-size:.8rem;margin-top:.375rem;display:flex;align-items:center;gap:.375rem}
@@ -152,6 +164,8 @@ tr:last-child td{border-bottom:none}
   <h1>Start Migration</h1>
   <p class="subtitle">SQL Server → PostgreSQL</p>
 
+  <p class="optim-pill">30 indexes &middot; 22 foreign keys &middot; 22 data checks &middot; 9 auto-trim triggers &middot; cascade deletes</p>
+
   <div class="btn-group">
     <button class="btn btn-primary" id="btn-start" onclick="startMigration(false)">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -171,6 +185,7 @@ tr:last-child td{border-bottom:none}
     <div class="overall-bar"><div class="fill" id="overall-fill"></div></div>
     <div class="overall-stats">
       <span id="overall-rows">— rows written</span>
+      <span id="overall-skipped">0 skipped</span>
       <span id="overall-errors">0 errors</span>
     </div>
   </div>
@@ -188,7 +203,7 @@ tr:last-child td{border-bottom:none}
   <div class="results" id="results" style="display:none">
     <h2>Results</h2>
     <table>
-      <thead><tr><th>Table</th><th class="num">Read</th><th class="num">Written</th><th class="num">Errors</th><th>Status</th></tr></thead>
+      <thead><tr><th>Table</th><th class="num">Read</th><th class="num">Written</th><th class="num">Skipped</th><th class="num">Errors</th><th>Status</th></tr></thead>
       <tbody id="results-body"></tbody>
     </table>
   </div>
@@ -223,8 +238,14 @@ tr:last-child td{border-bottom:none}
       <div class="field"><label>Password</label><input id="pg-password" type="password"></div>
     </div>
     <div class="field-action">
-      <div class="field"><label>Database</label><input id="pg-database" placeholder="barmount"></div>
-      <button class="btn btn-secondary" onclick="createDatabase()" id="btn-create-db" style="margin-bottom:.875rem">
+      <div class="field">
+        <label>Database</label>
+        <div class="db-wrap">
+          <input id="pg-database" placeholder="type to search or create…" autocomplete="off">
+          <ul class="db-dropdown" id="db-dropdown"></ul>
+        </div>
+      </div>
+      <button class="btn btn-secondary" onclick="createDatabase()" id="btn-create-db" style="margin-bottom:.875rem" disabled>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
         Create DB
       </button>
@@ -313,6 +334,7 @@ let migrationStartTime = null;
 let tablesCompleted = 0;
 let totalTables = 0;
 let totalRowsWritten = 0;
+let totalRowsSkipped = 0;
 let totalRowsErrored = 0;
 
 function formatElapsed(ms) {
@@ -329,6 +351,7 @@ function startTimer() {
   tablesCompleted = 0;
   totalTables = 0;
   totalRowsWritten = 0;
+  totalRowsSkipped = 0;
   totalRowsErrored = 0;
   clearInterval(timerInterval);
   timerInterval = setInterval(() => {
@@ -347,6 +370,7 @@ function updateOverall() {
   document.getElementById('overall-fill').style.width = pct + '%';
   document.getElementById('tables-done').textContent = tablesCompleted + ' / ' + totalTables + ' tables';
   document.getElementById('overall-rows').textContent = totalRowsWritten.toLocaleString() + ' rows written';
+  document.getElementById('overall-skipped').textContent = totalRowsSkipped.toLocaleString() + ' skipped';
   document.getElementById('overall-errors').textContent = totalRowsErrored.toLocaleString() + ' errors';
 }
 
@@ -387,6 +411,7 @@ sse.addEventListener('table-done', e => {
   const { written, skipped, errored } = JSON.parse(e.data);
   tablesCompleted++;
   totalRowsWritten += written;
+  totalRowsSkipped += skipped;
   totalRowsErrored += errored;
   updateOverall();
 });
@@ -424,6 +449,7 @@ sse.addEventListener('migration-complete', e => {
       <td>${r.table}</td>
       <td class="num">${(r.rowsRead||0).toLocaleString()}</td>
       <td class="num">${(r.rowsWritten||0).toLocaleString()}</td>
+      <td class="num">${(r.rowsSkipped||0).toLocaleString()}</td>
       <td class="num">${(r.rowsErrored||0).toLocaleString()}</td>
       <td>${status}</td>
     </tr>`;
@@ -489,6 +515,57 @@ async function startMigration(dryRun) {
 
 // ── Settings ────────────────────────────────────────
 
+let _allDbs = [];
+
+async function loadDatabases(selectValue) {
+  try {
+    const res = await fetch('/api/list-databases');
+    const data = await res.json();
+    _allDbs = data.databases || [];
+  } catch (_) {}
+  const input = document.getElementById('pg-database');
+  if (selectValue) {
+    input.value = selectValue;
+    updateCreateBtn(selectValue);
+  }
+}
+
+function updateCreateBtn(val) {
+  const btn = document.getElementById('btn-create-db');
+  const exists = _allDbs.includes(val.trim().toLowerCase());
+  btn.disabled = exists || !val.trim();
+}
+
+(function initDbAutocomplete() {
+  const input = document.getElementById('pg-database');
+  const list  = document.getElementById('db-dropdown');
+
+  function render(val) {
+    const q = val.trim().toLowerCase();
+    const matches = _allDbs.filter(d => d.includes(q));
+    list.innerHTML = '';
+    matches.forEach(d => {
+      const li = document.createElement('li');
+      li.className = 'existing';
+      li.textContent = d;
+      li.addEventListener('mousedown', e => { e.preventDefault(); input.value = d; list.classList.remove('open'); updateCreateBtn(d); });
+      list.appendChild(li);
+    });
+    if (q && !_allDbs.includes(q)) {
+      const li = document.createElement('li');
+      li.className = 'new-entry';
+      li.textContent = `Create "${q}"`;
+      li.addEventListener('mousedown', e => { e.preventDefault(); input.value = q; list.classList.remove('open'); updateCreateBtn(q); });
+      list.appendChild(li);
+    }
+    list.classList.toggle('open', list.children.length > 0);
+  }
+
+  input.addEventListener('input',  () => { render(input.value); updateCreateBtn(input.value); });
+  input.addEventListener('focus',  () => render(input.value));
+  input.addEventListener('blur',   () => setTimeout(() => list.classList.remove('open'), 150));
+})();
+
 async function loadSettings() {
   try {
     const res = await fetch('/api/settings');
@@ -498,7 +575,8 @@ async function loadSettings() {
     document.getElementById('pg-user').value     = s.pg.user;
     document.getElementById('pg-password').value = s.pg.password === '••••••••' ? '' : s.pg.password;
     document.getElementById('pg-password').placeholder = s.pg.password === '••••••••' ? '••••••••' : '';
-    document.getElementById('pg-database').value = s.pg.database;
+    await loadDatabases(s.pg.database);
+    updateCreateBtn(s.pg.database || '');
     document.getElementById('ms-host').value     = s.mssql.host;
     document.getElementById('ms-port').value     = s.mssql.port;
     document.getElementById('ms-user').value     = s.mssql.user;
@@ -517,7 +595,7 @@ async function saveSettings() {
       port:     document.getElementById('pg-port').value,
       user:     document.getElementById('pg-user').value,
       password: document.getElementById('pg-password').value || '••••••••',
-      database: document.getElementById('pg-database').value,
+      database: document.getElementById('pg-database').value.trim().toLowerCase() || '',  
     },
     mssql: {
       host:     document.getElementById('ms-host').value,
@@ -542,7 +620,7 @@ async function saveSettings() {
 }
 
 async function createDatabase() {
-  const dbName = document.getElementById('pg-database').value.trim();
+  const dbName = document.getElementById('pg-database').value.trim().toLowerCase();
   const resultEl = document.getElementById('create-db-result');
   const btn = document.getElementById('btn-create-db');
   if (!dbName) { toast('Enter a database name first', true); return; }
@@ -558,6 +636,9 @@ async function createDatabase() {
     if (res.ok) {
       resultEl.innerHTML = '<span class="dot ok"></span> Database "' + dbName + '" created successfully';
       toast('Database created: ' + dbName);
+      await loadDatabases(dbName);
+      updateCreateBtn(dbName);
+      testConnections();
     } else {
       resultEl.innerHTML = '<span class="dot fail"></span> ' + data.error;
       toast(data.error, true);

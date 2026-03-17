@@ -66,7 +66,7 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
       TRUNCATE breeds, pens, contacts, diseases, drugs, cost_codes, market_categories,
                purchase_lots, cows, weighing_events, pen_movements, treatments, costs,
                health_records, carcase_data, autopsy_records, vendor_declarations,
-               location_changes, drug_purchases, drug_disposals, legacy_raw,
+               drug_purchases, drug_disposals, legacy_raw,
                migration_log CASCADE
     `);
   } else if (!dryRun && tables) {
@@ -169,12 +169,25 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
   try {
     // Get total row count for progress reporting (non-blocking — failures are OK)
     let totalRows = 0;
+    const countQ = mapping.countQuery || `SELECT COUNT(*) AS cnt FROM [dbo].[${sourceTable}]`;
     try {
-      const countRes = await mssqlPool.request().query(
-        `SELECT COUNT(*) AS cnt FROM [dbo].[${sourceTable}]`
-      );
+      const countRes = await mssqlPool.request().query(countQ);
       totalRows = countRes.recordset[0].cnt;
     } catch (_) {}
+
+    // If a custom countQuery was used, compare with raw count to report dedup
+    if (mapping.countQuery) {
+      let rawTotal = 0;
+      try {
+        const rawCountRes = await mssqlPool.request().query(
+          `SELECT COUNT(*) AS cnt FROM [dbo].[${sourceTable}]`
+        );
+        rawTotal = rawCountRes.recordset[0].cnt;
+      } catch (_) {}
+      if (rawTotal > totalRows) {
+        log.info(`  ${sourceTable}: ${rawTotal.toLocaleString()} source rows → ${totalRows.toLocaleString()} unique (${(rawTotal - totalRows).toLocaleString()} duplicates merged — latest record per ID kept)`);
+      }
+    }
 
     if (totalRows === 0) {
       // Verify with a single-page read in case COUNT failed
@@ -184,6 +197,7 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
       if (probe.recordset.length === 0) {
         stats.status = 'completed';
         log.info(`  ${sourceTable}: 0 rows — skipping`);
+        log.info(`  Done: 0 written, 0 skipped, 0 errored`);
         await updateMigrationLog(pgPool, logId, stats, dryRun);
         return stats;
       }
@@ -202,12 +216,13 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
       if (rows.length === 0) break;
       stats.rowsRead += rows.length;
 
-      const { written, skipped, errored } = await processBatch(
+      const { written, skipped, errored, orphaned } = await processBatch(
         pgPool, rows, mapping, { log, dryRun, lookups }
       );
       stats.rowsWritten += written;
       stats.rowsSkipped += skipped;
       stats.rowsErrored += errored;
+      stats._orphaned = (stats._orphaned || 0) + (orphaned || 0);
 
       offset += rows.length;
 
@@ -225,8 +240,11 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
       if (rows.length < batchSize) break; // last page
     }
 
-    stats.status = 'completed';
+    stats.status = (stats.rowsRead > 0 && stats.rowsWritten === 0 && stats.rowsErrored > 0) ? 'failed' : 'completed';
     log.info(`  Done: ${stats.rowsWritten} written, ${stats.rowsSkipped} skipped, ${stats.rowsErrored} errored`);
+    if (stats._orphaned > 0) {
+      log.info(`  ${stats._orphaned.toLocaleString()} orphaned rows (no matching cow) → legacy_raw as ${sourceTable}_orphaned`);
+    }
   } catch (err) {
     stats.status = 'failed';
     stats.error = err.message;
@@ -244,6 +262,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
   const { columns, targetTable, validate, transformRow, buildInsertValues, staticValues, requiresLookup } = mapping;
 
   let written = 0, skipped = 0, errored = 0;
+  const orphanedRows = [];
 
   // Transform rows
   const transformed = [];
@@ -270,6 +289,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         const beastId = row._beast_id;
         const cowId = lookups.cowIdMap[beastId];
         if (!cowId) {
+          orphanedRows.push(rawRow);
           skipped++;
           continue;
         }
@@ -348,8 +368,39 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
     }
   }
 
+  // Capture orphaned rows (missing cow_id) in legacy_raw so no data is lost
+  if (orphanedRows.length > 0 && !dryRun) {
+    try {
+      const oc = await pgPool.connect();
+      try {
+        await oc.query('BEGIN');
+        // Batch insert orphans — 2 params each, well within PG's 65535 limit
+        const oClauses = [];
+        const oVals = [];
+        for (let i = 0; i < orphanedRows.length; i++) {
+          const clean = {};
+          for (const [k, v] of Object.entries(orphanedRows[i])) {
+            if (Buffer.isBuffer(v)) clean[k] = `[BINARY ${v.length} bytes]`;
+            else clean[k] = v;
+          }
+          oClauses.push(`($${i * 2 + 1}, $${i * 2 + 2})`);
+          oVals.push(`${mapping.sourceTable}_orphaned`, JSON.stringify(clean));
+        }
+        await oc.query(
+          `INSERT INTO legacy_raw (source_table, row_data) VALUES ${oClauses.join(', ')}`,
+          oVals
+        );
+        await oc.query('COMMIT');
+      } catch (e) {
+        await oc.query('ROLLBACK');
+      } finally {
+        oc.release();
+      }
+    } catch (_) {}
+  }
+
   if (transformed.length === 0 || dryRun) {
-    return { written: dryRun ? transformed.length : 0, skipped, errored };
+    return { written: dryRun ? transformed.length : 0, skipped, errored, orphaned: orphanedRows.length };
   }
 
   // Build and execute multi-row INSERT (much faster than row-by-row)
@@ -385,15 +436,19 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
       }
 
       try {
+        await client.query('SAVEPOINT batch_sp');
         const result = await client.query(
           `INSERT INTO ${targetTable} (${keys.join(', ')}) VALUES ${valueClauses.join(', ')} ON CONFLICT DO NOTHING`,
           allVals
         );
+        await client.query('RELEASE SAVEPOINT batch_sp');
         written += result.rowCount;
         skipped += chunk.length - result.rowCount;
       } catch (err) {
+        // Roll back the savepoint so the transaction is usable for row-by-row fallback
+        await client.query('ROLLBACK TO SAVEPOINT batch_sp');
         // Multi-row failed — fall back to row-by-row for this chunk only
-        log.debug(`  Multi-row insert failed for ${targetTable}, falling back to row-by-row: ${err.message}`);
+        log.warn(`  Batch insert failed for ${targetTable}, falling back to row-by-row: ${err.message}`);
         for (const row of chunk) {
           try {
             const vals = keys.map(k => row[k]);
@@ -409,7 +464,8 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
           } catch (rowErr) {
             await client.query('ROLLBACK TO SAVEPOINT sp');
             errored++;
-            log.debug(`  Row insert error (${targetTable}): ${rowErr.message}`);
+            if (errored <= 3) log.warn(`  Row insert error (${targetTable}): ${rowErr.message}`);
+            else if (errored === 4) log.warn(`  (suppressing further row errors for ${targetTable})`);
           }
         }
       }
@@ -423,7 +479,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
     client.release();
   }
 
-  return { written, skipped, errored };
+  return { written, skipped, errored, orphaned: orphanedRows.length };
 }
 
 // ── Lookup builders ──────────────────────────────────
@@ -546,7 +602,6 @@ async function validateMigration(mssqlPool, pgPool) {
     { source: 'dbo.Drugs_Given',        target: 'treatments' },
     { source: 'dbo.Sick_Beast_Records', target: 'health_records' },
     { source: 'dbo.Carcase_data',       target: 'carcase_data' },
-    { source: 'dbo.Location_Changes',   target: 'location_changes' },
     { source: 'dbo.Drug_Disposal',      target: 'drug_disposals' },
     { source: 'dbo.Drugs_Purchased',    target: 'drug_purchases' },
     { source: 'dbo.Costs',              target: 'costs' },
@@ -557,7 +612,6 @@ async function validateMigration(mssqlPool, pgPool) {
     { source: 'dbo.Autopsy_Records',    target: 'autopsy_records' },
     { source: 'dbo.Vendor_Declarations', target: 'vendor_declarations' },
   ];
-
   for (const { source, target } of countChecks) {
     try {
       const srcRes = await mssqlPool.request().query(`SELECT COUNT(*) AS cnt FROM ${source}`);
@@ -609,7 +663,6 @@ async function validateMigration(mssqlPool, pgPool) {
     { table: 'vendor_declarations', fk: 'owner_contact_id', ref: 'contacts', refCol: 'id' },
     { table: 'carcase_data',    fk: 'cow_id', ref: 'cows', refCol: 'id' },
     { table: 'autopsy_records', fk: 'cow_id', ref: 'cows', refCol: 'id' },
-    { table: 'location_changes',  fk: 'cow_id',   ref: 'cows',  refCol: 'id' },
     { table: 'drug_purchases',    fk: 'drug_id',  ref: 'drugs', refCol: 'id' },
     { table: 'drug_disposals',    fk: 'drug_id',  ref: 'drugs', refCol: 'id' },
   ];
@@ -791,6 +844,7 @@ async function migrateRawTables(mssqlPool, pgPool, opts = {}) {
 
         if (isEmpty) {
           stats.status = 'completed';
+          log.info(`  Done: 0 written, 0 skipped, 0 errored`);
           await updateMigrationLog(pgPool, logId, stats, dryRun);
           results.push(stats);
           continue;

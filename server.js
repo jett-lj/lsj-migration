@@ -175,18 +175,18 @@ app.post('/api/settings', (req, res) => {
 
   // Update process.env (runtime only)
   if (pg) {
-    if (pg.host)     process.env.DB_HOST     = pg.host;
-    if (pg.port)     process.env.DB_PORT     = pg.port;
-    if (pg.user)     process.env.DB_USER     = pg.user;
+    if (pg.host)     process.env.DB_HOST     = pg.host.trim();
+    if (pg.port)     process.env.DB_PORT     = pg.port.trim();
+    if (pg.user)     process.env.DB_USER     = pg.user.trim();
     if (pg.password && pg.password !== '••••••••') process.env.DB_PASSWORD = pg.password;
-    if (pg.database) process.env.DB_NAME     = pg.database;
+    if (pg.database) process.env.DB_NAME     = pg.database.trim().toLowerCase();
   }
   if (mssql) {
-    if (mssql.host)     process.env.MSSQL_HOST     = mssql.host;
-    if (mssql.port)     process.env.MSSQL_PORT     = mssql.port;
-    if (mssql.user)     process.env.MSSQL_USER     = mssql.user;
+    if (mssql.host)     process.env.MSSQL_HOST     = mssql.host.trim();
+    if (mssql.port)     process.env.MSSQL_PORT     = mssql.port.trim();
+    if (mssql.user)     process.env.MSSQL_USER     = mssql.user.trim();
     if (mssql.password && mssql.password !== '••••••••') process.env.MSSQL_PASSWORD = mssql.password;
-    if (mssql.database) process.env.MSSQL_DATABASE = mssql.database;
+    if (mssql.database) process.env.MSSQL_DATABASE = mssql.database.trim();
   }
   if (batchSize) process.env.MIGRATION_BATCH_SIZE = batchSize;
 
@@ -326,6 +326,36 @@ app.post('/api/migrate', async (req, res) => {
     restore();
     await closePools().catch(() => {});
     migrationRunning = false;
+  }
+});
+
+// ── List PostgreSQL databases ───────────────────────
+
+app.get('/api/list-databases', async (req, res) => {
+  const { Pool } = require('pg');
+  const cfg = pgConfig();
+  let maintCfg;
+  if (cfg.connectionString) {
+    try {
+      const url = new URL(cfg.connectionString);
+      url.pathname = '/postgres';
+      maintCfg = { connectionString: url.toString(), max: 1 };
+    } catch (_) {
+      maintCfg = { ...cfg, database: 'postgres', max: 1 };
+    }
+  } else {
+    maintCfg = { ...cfg, database: 'postgres', max: 1 };
+  }
+  const pool = new Pool(maintCfg);
+  try {
+    const result = await pool.query(
+      `SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname`
+    );
+    res.json({ databases: result.rows.map(r => r.datname) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    await pool.end().catch(() => {});
   }
 });
 

@@ -30,7 +30,6 @@ const TABLE_CATEGORIES = {
   'Carcase_data':           { strategy: 'mapped', target: 'carcase_data' },
   'Autopsy_Records':        { strategy: 'mapped', target: 'autopsy_records' },
   'Vendor_Declarations':    { strategy: 'mapped', target: 'vendor_declarations' },
-  'Location_Changes':       { strategy: 'mapped', target: 'location_changes' },
   'Drugs_Purchased':        { strategy: 'mapped', target: 'drug_purchases' },
   'Drug_Disposal':          { strategy: 'mapped', target: 'drug_disposals' },
 
@@ -142,6 +141,7 @@ const TABLE_CATEGORIES = {
   'Weighing_Types_RV':             { strategy: 'raw' },
 
   // ── Excluded (not migrated — documented reasons) ───
+  'Location_Changes':                    { strategy: 'excluded', reason: 'Not used — 0 rows, no target table' },
   // Per-user session/keyfile tables (14 per category; temporary UI state data)
   'BatchUpdate_Keyfile_Administrator':   { strategy: 'excluded', reason: 'Per-user session keyfile' },
   'BatchUpdate_Keyfile_B_0021':          { strategy: 'excluded', reason: 'Per-user session keyfile' },

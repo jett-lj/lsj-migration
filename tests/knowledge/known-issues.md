@@ -32,6 +32,12 @@
 | Breed text not ID | `cows.breed` stores text name, not FK to breeds.id | Design decision — avoids FK overhead; breeds table is still populated for reference |
 | Ownership period compression | 5 bools → 1 text via priority | Lossy if multiple flags true; logged as MEDIUM risk |
 
+## Bugs Fixed (Phase 1)
+
+| # | File | Bug | Fix Applied |
+|---|---|---|---|
+| 8 | mappings.js | `Drugs_Purchased` query selected `Purchase_Date` which doesn't exist in source table → query failed with 0 rows FAIL | Changed to `NULL AS Purchase_Date`; target column is nullable |
+
 ## Validation Gaps (now covered)
 
 - `dbo.Sick_Beast_Records → health_records` was missing from row count validation — added

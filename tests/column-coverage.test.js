@@ -1,7 +1,7 @@
 /**
- * Column-coverage test suite — 5 layers of verification.
+ * Column-coverage test suite â€” 5 layers of verification.
  *
- * Layer 1: Static manifest audit (every column in column-audit.md ↔ mappings.js)
+ * Layer 1: Static manifest audit (every column in column-audit.md â†” mappings.js)
  * Layer 2: Golden-row integration (one row per table, all columns non-null)
  * Layer 3: Numeric precision & edge cases
  * Layer 4: FK chain end-to-end
@@ -26,7 +26,7 @@ const {
   buildLookup, buildCowIdMap, createLogger,
 } = require('../runner');
 
-// ── Test helpers ─────────────────────────────────────
+// â”€â”€ Test helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const TEST_DB = 'lsj_column_coverage_test';
 const FARM_SCHEMA = path.join(__dirname, '..', 'schema-farm.sql');
@@ -112,7 +112,7 @@ afterAll(async () => {
   }
 });
 
-// ── Manifest: expected columns per source table ──────
+// â”€â”€ Manifest: expected columns per source table â”€â”€â”€â”€â”€â”€
 
 const MANIFEST = {
   Breeds:              ['Breed_Code', 'Breed_Name'],
@@ -139,24 +139,23 @@ const MANIFEST = {
   Autopsy_Records:     ['Beast_ID', 'Ear_Tag_No', 'Date_Dead', 'Time_Dead', 'Date_Autopsy',
                          'Autopsy_By', 'Pre_Autopsy_Diag', 'Post_Autopsy_Diag', 'Notes'],
   // Note: Autopsy anatomical boolean fields (Nostrils_*, Larynx_*, etc.) are handled
-  // by transformRow → packed into JSONB `findings`, not in the columns array.
+  // by transformRow â†’ packed into JSONB `findings`, not in the columns array.
   // Note: Vendor_Declarations ownership booleans (Born_on_Vend_prop, Owned_*) are
-  // handled by transformRow → derived into ownership_period, not in the columns array.
+  // handled by transformRow â†’ derived into ownership_period, not in the columns array.
   Vendor_Declarations: ['Vendor_Dec_Number', 'Owner_Contact_ID', 'Form_Date', 'Number_Cattle',
                          'Cattle_Description', 'Tail_Tag', 'RFIDs_in_cattle', 'HGP_Treated',
                          'QA_program', 'QA_Program_details',
                          'Fed_stockfeeds', 'Chem_Res_restriction',
                          'Withholding_for_drugs', 'Withholding_for_feed', 'Additional_info'],
-  Location_Changes:    ['BeastID', 'Ear_Tag', 'EID', 'Movement_Date', 'From_location', 'To_Location', 'New_animal', 'Slaughtered'],
   Drugs_Purchased:     ['DrugID', 'Quantity_received', 'Purchase_Date', 'Batch_number', 'Expiry_date', 'Drug_cost'],
   Drug_Disposal:       ['DrugID', 'Number_disposed', 'Date_disposed', 'Disposal_reason', 'Disposal_method', 'Disposed_by', 'Notes'],
 };
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // LAYER 1: STATIC MANIFEST AUDIT
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-describe('Layer 1 — Static manifest audit', () => {
+describe('Layer 1 â€” Static manifest audit', () => {
   it('every source table in MANIFEST has a mapping', () => {
     const mappedSources = new Set(mappings.map(m => m.sourceTable));
     for (const src of Object.keys(MANIFEST)) {
@@ -189,25 +188,25 @@ describe('Layer 1 — Static manifest audit', () => {
     }
   });
 
-  it('all 20 tables are covered', () => {
-    expect(Object.keys(MANIFEST)).toHaveLength(20);
-    expect(mappings).toHaveLength(20);
+  it('all 19 tables are covered', () => {
+    expect(Object.keys(MANIFEST)).toHaveLength(19);
+    expect(mappings).toHaveLength(19);
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // LAYER 2: GOLDEN ROW INTEGRATION
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-describe('Layer 2 — Golden row per table', () => {
+describe('Layer 2 â€” Golden row per table', () => {
   beforeEach(async () => {
     const tables = [
-      'geofence_alerts', 'geofences', 'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'locations', 'cows',
-      'carcase_data', 'autopsy_records', 'location_changes',
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events', 'cows',
+      'carcase_data', 'autopsy_records',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
-      'diseases', 'contacts', 'pens', 'breeds', 'herds', 'migration_log',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
     ];
     for (const t of tables) {
       await pgPool.query(`DELETE FROM ${t}`);
@@ -247,7 +246,6 @@ describe('Layer 2 — Golden row per table', () => {
     Carcase_data:     [],
     Autopsy_Records:  [],
     Vendor_Declarations: [],
-    Location_Changes: [],
     Drugs_Purchased:  [{ DrugID: 1, Quantity_received: 200, Purchase_Date: '2024-01-05',
                          Batch_number: 'GBATCH01', Expiry_date: '2025-12-31', Drug_cost: 2550.00, ID: 1 }],
     Drug_Disposal:    [{ DrugID: 1, Number_disposed: 10, Date_disposed: '2024-06-01',
@@ -255,7 +253,7 @@ describe('Layer 2 — Golden row per table', () => {
                          Disposed_by: 'GD', Notes: 'golden disposal', Disposal_ID: 1 }],
   };
 
-  it('full migration with golden data — all tables populated correctly', async () => {
+  it('full migration with golden data â€” all tables populated correctly', async () => {
     const mock = createMockMssql(goldenData);
     const { results } = await runMigration(mock, pgPool, {
       batchSize: 100, logLevel: 'error', dryRun: false,
@@ -366,7 +364,7 @@ describe('Layer 2 — Golden row per table', () => {
     expect(tr.rows[0].dose).toBe(3.5);
     expect(tr.rows[0].administered_by).toBe('GD');
     expect(tr.rows[0].withhold_until).not.toBeNull();
-    // treatment → health_record link via SB_Rec_No
+    // treatment â†’ health_record link via SB_Rec_No
     expect(tr.rows[0].health_record_id).toBe(hr.rows[0].id);
 
     // --- costs ---
@@ -403,11 +401,11 @@ describe('Layer 2 — Golden row per table', () => {
   }, 30000);
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // LAYER 3: NUMERIC PRECISION & EDGE CASES
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-describe('Layer 3 — Numeric precision & edge cases', () => {
+describe('Layer 3 â€” Numeric precision & edge cases', () => {
   describe('withhold_days and esi_days nullable', () => {
     it('null withhold_days stays null (not coerced to 0)', () => {
       expect(toNum(null)).toBeNull();
@@ -459,13 +457,13 @@ describe('Layer 3 — Numeric precision & edge cases', () => {
   });
 
   describe('toBool inversion (active fields)', () => {
-    it('Inactive=true → active=false', () => {
+    it('Inactive=true â†’ active=false', () => {
       expect(!toBool(true)).toBe(false);
       expect(!toBool(1)).toBe(false);
       expect(!toBool('Y')).toBe(false);
     });
 
-    it('Inactive=false → active=true', () => {
+    it('Inactive=false â†’ active=true', () => {
       expect(!toBool(false)).toBe(true);
       expect(!toBool(0)).toBe(true);
       expect(!toBool(null)).toBe(true);
@@ -473,7 +471,7 @@ describe('Layer 3 — Numeric precision & edge cases', () => {
   });
 
   describe('toFkId sentinel handling', () => {
-    it('0 → null (legacy default for no reference)', () => {
+    it('0 â†’ null (legacy default for no reference)', () => {
       expect(toFkId(0)).toBeNull();
       expect(toFkId('0')).toBeNull();
     });
@@ -483,7 +481,7 @@ describe('Layer 3 — Numeric precision & edge cases', () => {
       expect(toFkId(999)).toBe(999);
     });
 
-    it('null/undefined → null', () => {
+    it('null/undefined â†’ null', () => {
       expect(toFkId(null)).toBeNull();
       expect(toFkId(undefined)).toBeNull();
     });
@@ -562,26 +560,26 @@ describe('Layer 3 — Numeric precision & edge cases', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // LAYER 4: FK CHAIN END-TO-END
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-describe('Layer 4 — FK chain tests', () => {
+describe('Layer 4 â€” FK chain tests', () => {
   beforeEach(async () => {
     const tables = [
-      'geofence_alerts', 'geofences', 'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'locations', 'cows',
-      'carcase_data', 'autopsy_records', 'location_changes',
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events', 'cows',
+      'carcase_data', 'autopsy_records',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
-      'diseases', 'contacts', 'pens', 'breeds', 'herds', 'migration_log',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
     ];
     for (const t of tables) {
       await pgPool.query(`DELETE FROM ${t}`);
     }
   });
 
-  it('cowIdMap skip — unknown BeastID skips the row', async () => {
+  it('cowIdMap skip â€” unknown BeastID skips the row', async () => {
     const mock = createMockMssql({
       'Weighing_Events': [
         { BeastID: 9999, Weighing_Type: 1, Weigh_date: '2024-01-01', Weight: 300, P8_Fat: 5, Weigh_Note: 'orphan', ID: 1 },
@@ -596,7 +594,7 @@ describe('Layer 4 — FK chain tests', () => {
     expect(result.rowsWritten).toBe(0);
   });
 
-  it('drugIdSet sanitize — unknown drug_id set to null', async () => {
+  it('drugIdSet sanitize â€” unknown drug_id set to null', async () => {
     // Seed a cow for the treatment to attach to
     await pgPool.query("INSERT INTO breeds (name) VALUES ('Test') ON CONFLICT DO NOTHING");
     await pgPool.query(`
@@ -623,7 +621,7 @@ describe('Layer 4 — FK chain tests', () => {
     expect(rows.rows[0].drug_id).toBeNull();
   });
 
-  it('contactIdSet sanitize — unknown vendor_id set to null', async () => {
+  it('contactIdSet sanitize â€” unknown vendor_id set to null', async () => {
     const mock = createMockMssql({
       'Purchase_Lots': [
         { ID: 1, Lot_Number: 'FK_VEN', Purchase_date: '2024-01-01', Vendor_ID: 8888,
@@ -642,7 +640,7 @@ describe('Layer 4 — FK chain tests', () => {
     expect(rows.rows[0].vendor_id).toBeNull();
   });
 
-  it('costCodeMap resolve — cost_code_id correctly resolved', async () => {
+  it('costCodeMap resolve â€” cost_code_id correctly resolved', async () => {
     await pgPool.query("INSERT INTO breeds (name) VALUES ('CostTest') ON CONFLICT DO NOTHING");
     await pgPool.query("INSERT INTO cost_codes (code, description, type) VALUES (99, 'TestCode', 'expense') ON CONFLICT DO NOTHING");
     await pgPool.query(`
@@ -672,7 +670,7 @@ describe('Layer 4 — FK chain tests', () => {
     expect(rows.rows[0].unit_cost).toBe(5);
   });
 
-  it('pen auto-create — unknown pen is created on demand', async () => {
+  it('pen auto-create â€” unknown pen is created on demand', async () => {
     await pgPool.query("INSERT INTO breeds (name) VALUES ('PenTest') ON CONFLICT DO NOTHING");
     await pgPool.query(`
       INSERT INTO cows (tag_number, breed, legacy_beast_id, status, sex)
@@ -701,12 +699,12 @@ describe('Layer 4 — FK chain tests', () => {
     expect(pmRows.rows[0].pen_id).toBe(penRows.rows[0].id);
   });
 
-  it('disease_id FK — unknown disease_id (0) set to null via toFkId', () => {
+  it('disease_id FK â€” unknown disease_id (0) set to null via toFkId', () => {
     expect(toFkId(0)).toBeNull();
     expect(toFkId(null)).toBeNull();
   });
 
-  it('diseaseIdSet sanitize — unknown disease_id set to null', async () => {
+  it('diseaseIdSet sanitize â€” unknown disease_id set to null', async () => {
     await pgPool.query("INSERT INTO breeds (name) VALUES ('DiseaseTest') ON CONFLICT DO NOTHING");
     await pgPool.query(`
       INSERT INTO cows (tag_number, breed, legacy_beast_id, status, sex)
@@ -733,7 +731,7 @@ describe('Layer 4 — FK chain tests', () => {
     expect(rows.rows[0].disease_id).toBeNull();
   });
 
-  it('drug_purchases — unknown drug_id nullified', async () => {
+  it('drug_purchases â€” unknown drug_id nullified', async () => {
     const mock = createMockMssql({
       'Drugs_Purchased': [
         { DrugID: 7777, Quantity_received: 10, Purchase_Date: '2024-01-01',
@@ -751,19 +749,19 @@ describe('Layer 4 — FK chain tests', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // LAYER 5: SELF-CHECKS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-describe('Layer 5 — Self-checks', () => {
+describe('Layer 5 â€” Self-checks', () => {
   beforeEach(async () => {
     const tables = [
-      'geofence_alerts', 'geofences', 'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'locations', 'cows',
-      'carcase_data', 'autopsy_records', 'location_changes',
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events', 'cows',
+      'carcase_data', 'autopsy_records',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
-      'diseases', 'contacts', 'pens', 'breeds', 'herds', 'migration_log',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
     ];
     for (const t of tables) {
       await pgPool.query(`DELETE FROM ${t}`);
@@ -803,7 +801,6 @@ describe('Layer 5 — Self-checks', () => {
       Carcase_data:     [],
       Autopsy_Records:  [],
       Vendor_Declarations: [],
-      Location_Changes: [],
       Drugs_Purchased:  [],
       Drug_Disposal:    [],
     };
@@ -854,7 +851,6 @@ describe('Layer 5 — Self-checks', () => {
       Carcase_data:     [],
       Autopsy_Records:  [],
       Vendor_Declarations: [],
-      Location_Changes: [],
       Drugs_Purchased:  [],
       Drug_Disposal:    [],
     };
@@ -863,13 +859,13 @@ describe('Layer 5 — Self-checks', () => {
     await runMigration(mock, pgPool, { batchSize: 100, logLevel: 'error' });
 
     const logs = await pgPool.query('SELECT source_table, status FROM migration_log ORDER BY id');
-    expect(logs.rows.length).toBe(20);
+    expect(logs.rows.length).toBe(19);
     for (const row of logs.rows) {
       expect(row.status).toBe('completed');
     }
   }, 30000);
 
-  it('FK orphan scan — no orphaned references after migration', async () => {
+  it('FK orphan scan â€” no orphaned references after migration', async () => {
     const goldenData = {
       Breeds:           [{ Breed_Code: 1, Breed_Name: 'Angus' }],
       FeedDB_Pens_File: [{ Pen_name: 'P01', IsPaddock: 'N' }],
@@ -902,7 +898,6 @@ describe('Layer 5 — Self-checks', () => {
       Carcase_data:     [],
       Autopsy_Records:  [],
       Vendor_Declarations: [],
-      Location_Changes: [],
       Drugs_Purchased:  [{ DrugID: 1, Quantity_received: 50, Purchase_Date: '2024-01-01',
                            Batch_number: null, Expiry_date: null, Drug_cost: 250, ID: 1 }],
       Drug_Disposal:    [],
@@ -934,7 +929,7 @@ describe('Layer 5 — Self-checks', () => {
     }
   }, 30000);
 
-  it('idempotency — running migration twice yields same row counts', async () => {
+  it('idempotency â€” running migration twice yields same row counts', async () => {
     const goldenData = {
       Breeds:           [{ Breed_Code: 1, Breed_Name: 'Angus' }],
       FeedDB_Pens_File: [{ Pen_name: 'P01', IsPaddock: 'N' }],
@@ -953,7 +948,6 @@ describe('Layer 5 — Self-checks', () => {
       Carcase_data:     [],
       Autopsy_Records:  [],
       Vendor_Declarations: [],
-      Location_Changes: [],
       Drugs_Purchased:  [],
       Drug_Disposal:    [],
     };
@@ -964,7 +958,7 @@ describe('Layer 5 — Self-checks', () => {
     const breedsAfter1 = await pgPool.query('SELECT COUNT(*) AS cnt FROM breeds');
     const pensAfter1   = await pgPool.query('SELECT COUNT(*) AS cnt FROM pens');
 
-    // Run again — TRUNCATE CASCADE should reset, yielding same counts
+    // Run again â€” TRUNCATE CASCADE should reset, yielding same counts
     await runMigration(mock, pgPool, { batchSize: 100, logLevel: 'error' });
 
     const breedsAfter2 = await pgPool.query('SELECT COUNT(*) AS cnt FROM breeds');

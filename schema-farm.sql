@@ -72,13 +72,6 @@ CREATE TABLE IF NOT EXISTS market_categories (
 
 -- ── Core tables ───────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS herds (
-  id          SERIAL PRIMARY KEY,
-  name        TEXT NOT NULL,
-  description TEXT,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
 CREATE TABLE IF NOT EXISTS purchase_lots (
   id              SERIAL PRIMARY KEY,
   lot_number      TEXT NOT NULL UNIQUE,
@@ -123,17 +116,6 @@ CREATE INDEX IF NOT EXISTS idx_cows_pen       ON cows(pen_id);
 CREATE INDEX IF NOT EXISTS idx_cows_legacy_id ON cows(legacy_beast_id);
 
 -- ── Event / history tables ────────────────────────────
-
-CREATE TABLE IF NOT EXISTS locations (
-  id          SERIAL PRIMARY KEY,
-  cow_id      INTEGER NOT NULL REFERENCES cows(id) ON DELETE CASCADE,
-  latitude    DOUBLE PRECISION NOT NULL,
-  longitude   DOUBLE PRECISION NOT NULL,
-  label       TEXT,
-  recorded_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_locations_cow_id     ON locations(cow_id);
-CREATE INDEX IF NOT EXISTS idx_locations_recorded_at ON locations(recorded_at DESC);
 
 CREATE TABLE IF NOT EXISTS weighing_events (
   id          SERIAL PRIMARY KEY,
@@ -202,27 +184,6 @@ CREATE TABLE IF NOT EXISTS costs (
 CREATE INDEX IF NOT EXISTS idx_costs_cow ON costs(cow_id);
 CREATE INDEX IF NOT EXISTS idx_costs_code ON costs(cost_code_id);
 CREATE INDEX IF NOT EXISTS idx_costs_date ON costs(trans_date);
-
--- ── Geofencing ────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS geofences (
-  id             SERIAL PRIMARY KEY,
-  name           TEXT NOT NULL,
-  center_lat     DOUBLE PRECISION NOT NULL,
-  center_lng     DOUBLE PRECISION NOT NULL,
-  radius_meters  DOUBLE PRECISION NOT NULL DEFAULT 500,
-  color          TEXT DEFAULT '#e53e3e',
-  created_at     TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS geofence_alerts (
-  id           SERIAL PRIMARY KEY,
-  geofence_id  INTEGER NOT NULL REFERENCES geofences(id) ON DELETE CASCADE,
-  cow_id       INTEGER NOT NULL REFERENCES cows(id) ON DELETE CASCADE,
-  alert_type   TEXT NOT NULL CHECK(alert_type IN ('exit','enter')),
-  created_at   TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_geoalert_created ON geofence_alerts(created_at DESC);
 
 -- ── Additional data tables (legacy data) ──────────────
 
@@ -308,21 +269,6 @@ CREATE TABLE IF NOT EXISTS vendor_declarations (
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS location_changes (
-  id                  SERIAL PRIMARY KEY,
-  cow_id              INTEGER REFERENCES cows(id) ON DELETE CASCADE,
-  legacy_beast_id     INTEGER NOT NULL,
-  ear_tag             TEXT,
-  eid                 TEXT,
-  movement_date       TIMESTAMPTZ,
-  from_location       TEXT,
-  to_location         TEXT,
-  is_new_animal       BOOLEAN DEFAULT FALSE,
-  is_slaughtered      BOOLEAN DEFAULT FALSE,
-  created_at          TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_loc_change_cow ON location_changes(cow_id);
-
 CREATE INDEX IF NOT EXISTS idx_vendor_dec_owner ON vendor_declarations(owner_contact_id);
 
 CREATE TABLE IF NOT EXISTS drug_purchases (
@@ -335,6 +281,16 @@ CREATE TABLE IF NOT EXISTS drug_purchases (
   cost                DOUBLE PRECISION,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Backfill: add purchase_date if table was created before this column existed
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'drug_purchases' AND column_name = 'purchase_date'
+  ) THEN
+    ALTER TABLE drug_purchases ADD COLUMN purchase_date DATE;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_drug_purch_drug ON drug_purchases(drug_id);
 

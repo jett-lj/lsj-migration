@@ -1,8 +1,8 @@
 /**
- * Comprehensive tests for the legacy CATTLE → PostgreSQL migration system.
+ * Comprehensive tests for the legacy CATTLE â†’ PostgreSQL migration system.
  *
  * Test suites:
- *   1. Transform helpers (unit tests — no DB required)
+ *   1. Transform helpers (unit tests â€” no DB required)
  *   2. Mapping definitions (structural validation)
  *   3. Migration runner (integration tests with real PostgreSQL + mock SQL Server)
  *   4. Validation checks
@@ -33,7 +33,7 @@ const {
 const { getMssqlConfig, getMigrationOptions } = require('../config');
 const { TABLE_CATEGORIES, getTableCategory, getCategorySummary } = require('../categories');
 
-// ── Test DB setup ────────────────────────────────────
+// â”€â”€ Test DB setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const TEST_DB = 'lsj_migration_test';
 const FARM_SCHEMA = path.join(__dirname, '..', 'schema-farm.sql');
@@ -85,7 +85,7 @@ afterAll(async () => {
   }
 });
 
-// ── Mock SQL Server pool ─────────────────────────────
+// â”€â”€ Mock SQL Server pool â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Creates a mock that behaves like mssql's ConnectionPool
 // so we can test migration logic without a real SQL Server.
 
@@ -133,9 +133,9 @@ function createMockMssql(tables) {
   };
 }
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 1. TRANSFORM HELPER TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Transform helpers', () => {
   describe('toBool', () => {
@@ -271,9 +271,9 @@ describe('Transform helpers', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 2. MAPPING DEFINITION TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Mapping definitions', () => {
   it('all mappings have required fields', () => {
@@ -340,20 +340,20 @@ describe('Mapping definitions', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 3. INTEGRATION TESTS (mock SQL Server + real PostgreSQL)
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-describe('Migration runner — integration', () => {
+describe('Migration runner â€” integration', () => {
   beforeEach(async () => {
     // Clean all data tables before each test
     const tables = [
-      'geofence_alerts', 'geofences', 'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'locations', 'cows',
-      'carcase_data', 'autopsy_records', 'location_changes',
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events', 'cows',
+      'carcase_data', 'autopsy_records',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
-      'diseases', 'contacts', 'pens', 'breeds', 'herds', 'migration_log',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
     ];
     for (const t of tables) {
       await pgPool.query(`DELETE FROM ${t}`);
@@ -504,7 +504,7 @@ describe('Migration runner — integration', () => {
   });
 
   describe('Full migration flow', () => {
-    it('migrates lookup → cattle → events in correct order', async () => {
+    it('migrates lookup â†’ cattle â†’ events in correct order', async () => {
       const mock = createMockMssql({
         'Breeds': [
           { Breed_Code: 1, Breed_Name: 'Angus' },
@@ -567,7 +567,6 @@ describe('Migration runner — integration', () => {
         'Carcase_data': [],
         'Autopsy_Records': [],
         'Vendor_Declarations': [],
-        'Location_Changes': [],
         'Drugs_Purchased': [],
         'Drug_Disposal': [],
       });
@@ -606,7 +605,7 @@ describe('Migration runner — integration', () => {
       expect(treatments.rows.length).toBeGreaterThanOrEqual(1);
       if (treatments.rows.length > 0) {
         expect(treatments.rows[0].dose).toBe(2.5);
-        // treatment → health_record link via SB_Rec_No
+        // treatment â†’ health_record link via SB_Rec_No
         expect(treatments.rows[0].health_record_id).toBe(healthRecs.rows[0].id);
       }
 
@@ -639,7 +638,6 @@ describe('Migration runner — integration', () => {
         'Carcase_data': [],
         'Autopsy_Records': [],
         'Vendor_Declarations': [],
-        'Location_Changes': [],
         'Drugs_Purchased': [],
         'Drug_Disposal': [],
       });
@@ -676,7 +674,6 @@ describe('Migration runner — integration', () => {
         'Carcase_data': [],
         'Autopsy_Records': [],
         'Vendor_Declarations': [],
-        'Location_Changes': [],
         'Drugs_Purchased': [],
         'Drug_Disposal': [],
       });
@@ -778,7 +775,6 @@ describe('Migration runner — integration', () => {
         'Carcase_data': [],
         'Autopsy_Records': [],
         'Vendor_Declarations': [],
-        'Location_Changes': [],
         'Drugs_Purchased': [],
         'Drug_Disposal': [],
       });
@@ -912,7 +908,6 @@ describe('Migration runner — integration', () => {
         'Carcase_data': [],
         'Autopsy_Records': [],
         'Vendor_Declarations': [],
-        'Location_Changes': [],
         'Drugs_Purchased': [],
         'Drug_Disposal': [],
       });
@@ -924,7 +919,7 @@ describe('Migration runner — integration', () => {
       expect(costs.rows[0].amount).toBe(250);
       expect(costs.rows[0].units).toBe(50);
 
-      // cost_code_id must be resolved — never null
+      // cost_code_id must be resolved â€” never null
       const ccRes = await pgPool.query('SELECT id FROM cost_codes WHERE code = 10');
       expect(costs.rows[0].cost_code_id).toBe(ccRes.rows[0].id);
     });
@@ -980,9 +975,9 @@ describe('Migration runner — integration', () => {
 });
 
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 4. DRUG PURCHASE / DISPOSAL TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Drug purchases and disposals migration', () => {
   beforeEach(async () => {
@@ -1134,20 +1129,20 @@ describe('Drug purchases and disposals migration', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 5. VALIDATION TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Post-migration validation', () => {
   it('passes all checks on clean migrated data', async () => {
     // Clean data from any prior tests
     const cleanTables = [
-      'geofence_alerts', 'geofences', 'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'locations', 'cows',
-      'carcase_data', 'autopsy_records', 'location_changes',
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events', 'cows',
+      'carcase_data', 'autopsy_records',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
-      'diseases', 'contacts', 'pens', 'breeds', 'herds', 'migration_log',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
     ];
     for (const t of cleanTables) {
       await pgPool.query(`DELETE FROM ${t}`);
@@ -1194,7 +1189,6 @@ describe('Post-migration validation', () => {
           if (sql.includes('Weighing_Events'))  return { recordset: [{ cnt: 1 }] };
           if (sql.includes('PensHistory'))      return { recordset: [{ cnt: 0 }] };
           if (sql.includes('Carcase_data'))     return { recordset: [{ cnt: 0 }] };
-          if (sql.includes('Location_Changes')) return { recordset: [{ cnt: 0 }] };
         }
         return { recordset: [] };
       },
@@ -1231,9 +1225,9 @@ describe('Post-migration validation', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 5. CONFIG & CONNECTION TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Config', () => {
   const origEnv = { ...process.env };
@@ -1295,9 +1289,9 @@ describe('Config', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 6. EDGE CASES & SECURITY TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Edge cases', () => {
   it('handles empty source tables gracefully', async () => {
@@ -1343,9 +1337,9 @@ describe('Edge cases', () => {
     const mock = createMockMssql({
       'Contacts': [
         {
-          Contact_ID: 100, Company: '日本牧場', Last_Name: 'Müller',
-          First_Name: 'José', Tel_No: null, Email: 'josé@example.com',
-          Address_1: 'Straße 42', ABN: null, Notes: null,
+          Contact_ID: 100, Company: 'æ—¥æœ¬ç‰§å ´', Last_Name: 'MÃ¼ller',
+          First_Name: 'JosÃ©', Tel_No: null, Email: 'josÃ©@example.com',
+          Address_1: 'StraÃŸe 42', ABN: null, Notes: null,
         },
       ],
     });
@@ -1358,9 +1352,9 @@ describe('Edge cases', () => {
     expect(result.rowsWritten).toBe(1);
 
     const res = await pgPool.query('SELECT * FROM contacts WHERE id = 100');
-    expect(res.rows[0].company).toBe('日本牧場');
-    expect(res.rows[0].last_name).toBe('Müller');
-    expect(res.rows[0].first_name).toBe('José');
+    expect(res.rows[0].company).toBe('æ—¥æœ¬ç‰§å ´');
+    expect(res.rows[0].last_name).toBe('MÃ¼ller');
+    expect(res.rows[0].first_name).toBe('JosÃ©');
   });
 
   it('handles extremely long text fields', async () => {
@@ -1402,11 +1396,11 @@ describe('Schema integrity', () => {
   it('all new tables exist in PostgreSQL', async () => {
     const expected = [
       'breeds', 'pens', 'contacts', 'diseases', 'drugs', 'cost_codes',
-      'market_categories', 'herds', 'purchase_lots', 'cows', 'locations',
+      'market_categories', 'purchase_lots', 'cows',
       'weighing_events', 'health_records', 'treatments', 'pen_movements',
-      'costs', 'geofences', 'geofence_alerts', 'migration_log',
+      'costs', 'migration_log',
       'carcase_data', 'autopsy_records', 'vendor_declarations',
-      'location_changes', 'drug_purchases', 'drug_disposals', 'legacy_raw',
+      'drug_purchases', 'drug_disposals', 'legacy_raw',
     ];
 
     const res = await pgPool.query(`
@@ -1447,7 +1441,6 @@ describe('Schema integrity', () => {
     expect(hasFk('health_records', 'cow_id', 'cows')).toBe(true);
     expect(hasFk('carcase_data', 'cow_id', 'cows')).toBe(true);
     expect(hasFk('autopsy_records', 'cow_id', 'cows')).toBe(true);
-    expect(hasFk('location_changes', 'cow_id', 'cows')).toBe(true);
     expect(hasFk('drug_purchases', 'drug_id', 'drugs')).toBe(true);
     expect(hasFk('drug_disposals', 'drug_id', 'drugs')).toBe(true);
   });
@@ -1472,14 +1465,13 @@ describe('Schema integrity', () => {
     expect(idxNames).toContain('idx_carcase_cow');
     expect(idxNames).toContain('idx_carcase_kill');
     expect(idxNames).toContain('idx_autopsy_cow');
-    expect(idxNames).toContain('idx_loc_change_cow');
     expect(idxNames).toContain('idx_legacy_raw_table');
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 7. TABLE CATEGORIES TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Table categories', () => {
   it('categorises all 171 legacy tables', () => {
@@ -1541,19 +1533,19 @@ describe('Table categories', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 8. NEW TABLE MAPPING TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('New table mappings', () => {
   beforeEach(async () => {
     const tables = [
-      'geofence_alerts', 'geofences', 'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'locations', 'cows',
-      'carcase_data', 'autopsy_records', 'location_changes',
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events', 'cows',
+      'carcase_data', 'autopsy_records',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
-      'diseases', 'contacts', 'pens', 'breeds', 'herds', 'migration_log',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
     ];
     for (const t of tables) {
       await pgPool.query(`DELETE FROM ${t}`);
@@ -1693,37 +1685,6 @@ describe('New table mappings', () => {
     expect(res.rows[0].ownership_period).toBe('6-12 months');
   });
 
-  it('migrates location changes correctly', async () => {
-    await pgPool.query("INSERT INTO breeds (id, name) VALUES (1, 'Angus') ON CONFLICT DO NOTHING");
-    await pgPool.query(`
-      INSERT INTO cows (tag_number, breed, legacy_beast_id, status, sex)
-      VALUES ('LC01', 'Angus', 600, 'active', 'female')
-    `);
-    const cowId = (await pgPool.query("SELECT id FROM cows WHERE tag_number = 'LC01'")).rows[0].id;
-
-    const mock = createMockMssql({
-      'Location_Changes': [{
-        BeastID: 600, Ear_Tag: 'LC01', EID: 'EID600',
-        Movement_Date: '2024-02-01', From_location: 'Paddock A',
-        To_Location: 'Pen 5', New_animal: false, Slaughtered: false, ID: 1,
-      }],
-    });
-
-    const mapping = mappings.find(m => m.sourceTable === 'Location_Changes');
-    const result = await migrateTable(mock, pgPool, mapping, {
-      batchSize: 100, log: createLogger('error'), dryRun: false,
-      lookups: { cowIdMap: { 600: cowId } },
-    });
-
-    expect(result.status).toBe('completed');
-    expect(result.rowsWritten).toBe(1);
-
-    const res = await pgPool.query('SELECT * FROM location_changes');
-    expect(res.rows[0].from_location).toBe('Paddock A');
-    expect(res.rows[0].to_location).toBe('Pen 5');
-    expect(res.rows[0].is_new_animal).toBe(false);
-  });
-
   it('migrates drug purchases', async () => {
     await pgPool.query(`INSERT INTO drugs (id, name, active) VALUES (1, 'TestDrug', true) ON CONFLICT DO NOTHING`);
 
@@ -1773,9 +1734,9 @@ describe('New table mappings', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 9. RAW TABLE MIGRATION TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Raw table migration', () => {
   beforeEach(async () => {
@@ -1858,9 +1819,9 @@ describe('Raw table migration', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 10. PRE-FLIGHT AUDIT & RECONCILIATION TESTS
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Pre-flight audit', () => {
   it('reports source tables with row counts', async () => {
@@ -1926,12 +1887,12 @@ describe('Pre-flight audit', () => {
 describe('Reconciliation report', () => {
   beforeEach(async () => {
     const tables = [
-      'geofence_alerts', 'geofences', 'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'locations', 'cows',
-      'carcase_data', 'autopsy_records', 'location_changes',
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events', 'cows',
+      'carcase_data', 'autopsy_records',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
-      'diseases', 'contacts', 'pens', 'breeds', 'herds', 'migration_log',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
     ];
     for (const t of tables) {
       await pgPool.query(`DELETE FROM ${t}`);
@@ -1967,19 +1928,19 @@ describe('Reconciliation report', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 11. LARGE-DATASET STRESS TESTS (pagination bulletproofing)
-// ══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Large-dataset pagination', () => {
   beforeEach(async () => {
     const tables = [
-      'geofence_alerts', 'geofences', 'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'locations', 'cows',
-      'carcase_data', 'autopsy_records', 'location_changes',
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events', 'cows',
+      'carcase_data', 'autopsy_records',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
-      'diseases', 'contacts', 'pens', 'breeds', 'herds', 'migration_log',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
     ];
     for (const t of tables) {
       await pgPool.query(`DELETE FROM ${t}`);
@@ -2012,7 +1973,7 @@ describe('Large-dataset pagination', () => {
     expect(last.rows[0].name).toBe('Breed_2000');
   });
 
-  it('handles 1000 cattle → event chain across pages', async () => {
+  it('handles 1000 cattle â†’ event chain across pages', async () => {
     // Generate 1000 cattle with corresponding weighing events
     const cattle = [];
     const weighEvents = [];
@@ -2049,7 +2010,6 @@ describe('Large-dataset pagination', () => {
       'Carcase_data': [],
       'Autopsy_Records': [],
       'Vendor_Declarations': [],
-      'Location_Changes': [],
       'Drugs_Purchased': [],
       'Drug_Disposal': [],
     });
@@ -2113,7 +2073,7 @@ describe('Large-dataset pagination', () => {
   });
 
   it('pagination handles exact batch-size boundary correctly', async () => {
-    // 200 rows with batch size 100 — exactly 2 full pages, no partial page
+    // 200 rows with batch size 100 â€” exactly 2 full pages, no partial page
     const breeds = [];
     for (let i = 1; i <= 200; i++) {
       breeds.push({ Breed_Code: i, Breed_Name: `Breed_${i}` });

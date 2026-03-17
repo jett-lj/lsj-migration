@@ -247,10 +247,12 @@ column-coverage tests.
 |---|---|---|---|
 | DrugID | drug_id | toFkId | ✓ |
 | Quantity_received | quantity | toNum | ✓ |
-| Purchase_Date | purchase_date | toDate | ✓ |
+| *(no source column — NULL)* | purchase_date | toDate | ⚠ Purchase_Date does not exist in source; mapped as NULL |
 | Batch_number | batch_number | trimOrNull | ✓ |
 | Expiry_date | expiry_date | toDate | ✓ |
 | Drug_cost | cost | toNum | ✓ |
+
+Actual source columns: `Receival_ID`, `DrugID`, `Quantity_received`, `Batch_number`, `Expiry_date`, `Drug_cost`, `Applied_to_SOH`, `ID`
 
 ## Drug_Disposal → drug_disposals
 | Source | Target | Transform | Status |
