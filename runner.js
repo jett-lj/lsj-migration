@@ -28,6 +28,22 @@ function createLogger(level) {
   };
 }
 
+// ── Column/table resilience helpers ──────────────────
+
+/** Escape special regex characters in a string */
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Replace a column reference in a SQL query with NULL AS [colName].
+ * Uses word boundaries to avoid partial matches (e.g. 'ID' won't match 'BeastID').
+ */
+function nullifyColumn(query, colName) {
+  const pattern = new RegExp(`\\b${escapeRegex(colName)}\\b`, 'g');
+  return query.replace(pattern, `NULL AS [${colName}]`);
+}
+
 // ── Core runner ─────────────────────────────────────
 
 /**
@@ -179,7 +195,8 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
  * rows, avoiding loading entire tables into memory (critical for 2GB+ databases).
  */
 async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun, lookups }) {
-  const { sourceTable, targetTable, query } = mapping;
+  const { sourceTable, targetTable } = mapping;
+  let query = mapping.query;
 
   log.info(`Migrating ${sourceTable} → ${targetTable}...`);
 
@@ -200,6 +217,37 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
   }
 
   try {
+    // ── Pre-flight: probe query and auto-fix missing columns/tables ──
+    const _missingCols = [];
+    for (let _attempt = 0; _attempt < 20; _attempt++) {
+      try {
+        await mssqlPool.request().query(
+          `${query} OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY`
+        );
+        break; // query works
+      } catch (probeErr) {
+        const colMatch = probeErr.message.match(/Invalid column name '([^']+)'/);
+        const tableMatch = probeErr.message.match(/Invalid object name '([^']+)'/);
+        if (colMatch) {
+          const col = colMatch[1];
+          _missingCols.push(col);
+          query = nullifyColumn(query, col);
+          continue;
+        }
+        if (tableMatch) {
+          log.warn(`  Source table ${tableMatch[1]} does not exist on this farm — skipping`);
+          stats.status = 'completed';
+          log.info(`  Done: 0 written, 0 skipped, 0 errored`);
+          await updateMigrationLog(pgPool, logId, stats, dryRun);
+          return stats;
+        }
+        throw probeErr; // re-throw unexpected errors
+      }
+    }
+    if (_missingCols.length > 0) {
+      log.warn(`  Columns not on this farm (nullified): ${_missingCols.join(', ')}`);
+    }
+
     // Get total row count for progress reporting (non-blocking — failures are OK)
     let totalRows = 0;
     const countQ = mapping.countQuery || `SELECT COUNT(*) AS cnt FROM [dbo].[${sourceTable}]`;

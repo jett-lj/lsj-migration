@@ -881,7 +881,7 @@ CREATE TABLE IF NOT EXISTS company (
   padd_tail_tag TEXT,
   date_last_feed_trans_compression DATE,
   digistar_datakey TEXT,
-  password_complexity TEXT NOT NULL,
+  password_complexity TEXT,
   abn TEXT,
   acn TEXT,
   address TEXT,
@@ -889,9 +889,12 @@ CREATE TABLE IF NOT EXISTS company (
   fax TEXT,
   email TEXT,
   logo BYTEA,
-  titration_feeding TEXT NOT NULL,
+  titration_feeding TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Fix: these columns may not exist on all farms, ensure nullable
+ALTER TABLE company ALTER COLUMN password_complexity DROP NOT NULL;
+ALTER TABLE company ALTER COLUMN titration_feeding DROP NOT NULL;
 
 -- Source: Company_Settings (7 rows)
 CREATE TABLE IF NOT EXISTS company_settings (
