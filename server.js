@@ -67,10 +67,75 @@ function pgConfig() {
   };
 }
 
+const FK_BLOCK_REGEX = /ALTER TABLE (\S+) DROP CONSTRAINT IF EXISTS (\S+);\s*\nALTER TABLE \S+ ADD CONSTRAINT \S+\s*\n\s*FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+
 async function ensureSchema(pgPool) {
   const schemaPath = path.join(__dirname, 'schema-farm.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
-  await pgPool.query(schema);
+  // Strip FK constraint blocks — they are restored after data load by restoreForeignKeys()
+  const schemaWithoutFks = schema.replace(FK_BLOCK_REGEX, '');
+  await pgPool.query(schemaWithoutFks);
+}
+
+async function dropAllForeignKeys(pgPool) {
+  const { rows } = await pgPool.query(`
+    SELECT tc.table_name, tc.constraint_name
+    FROM information_schema.table_constraints tc
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_schema = 'public'
+    ORDER BY tc.table_name
+  `);
+  for (const { table_name, constraint_name } of rows) {
+    await pgPool.query(`ALTER TABLE "${table_name}" DROP CONSTRAINT IF EXISTS "${constraint_name}"`);
+  }
+  console.log(`[INFO] Dropped ${rows.length} FK constraints for clean data load.`);
+}
+
+async function restoreForeignKeys(pgPool) {
+  const schemaPath = path.join(__dirname, 'schema-farm.sql');
+  const schema = fs.readFileSync(schemaPath, 'utf8');
+
+  // Extract ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY blocks
+  const fkBlocks = [...schema.matchAll(FK_BLOCK_REGEX)];
+
+  // Add each FK constraint with NOT VALID (skips existing-data check)
+  let added = 0;
+  const failures = [];
+  for (const match of fkBlocks) {
+    const block = match[0];
+    const notValidBlock = block.replace(
+      /(REFERENCES\s+[^;]+?)(;)\s*$/,
+      '$1 NOT VALID$2'
+    );
+    try {
+      await pgPool.query(notValidBlock);
+      added++;
+    } catch (err) {
+      failures.push({ constraint: match[2], error: err.message });
+    }
+  }
+  console.log(`[INFO] FK constraints added (NOT VALID): ${added}/${fkBlocks.length}`);
+
+  // Validate each constraint — checks existing data, logs failures
+  const { rows } = await pgPool.query(`
+    SELECT conrelid::regclass AS table_name, conname AS constraint_name
+    FROM pg_constraint
+    WHERE contype = 'f' AND NOT convalidated AND connamespace = 'public'::regnamespace
+  `);
+  let validated = 0;
+  for (const { table_name, constraint_name } of rows) {
+    try {
+      await pgPool.query(`ALTER TABLE ${table_name} VALIDATE CONSTRAINT "${constraint_name}"`);
+      validated++;
+    } catch (err) {
+      console.warn(`[WARN] FK validation failed: ${table_name}.${constraint_name} — ${err.message}`);
+      failures.push({ constraint: constraint_name, error: err.message });
+    }
+  }
+  console.log(`[INFO] FK constraints validated: ${validated}/${rows.length}`);
+  if (failures.length > 0) {
+    console.warn(`[WARN] ${failures.length} FK constraint(s) have orphaned data — constraints added but not fully validated.`);
+  }
 }
 
 /**
@@ -210,6 +275,8 @@ app.post('/api/settings', (req, res) => {
     `# ── Migration options ────────────────────────────────`,
     `MIGRATION_BATCH_SIZE=${process.env.MIGRATION_BATCH_SIZE || '500'}`,
     `MIGRATION_LOG_LEVEL=${process.env.MIGRATION_LOG_LEVEL || 'info'}`,
+    `PG_POOL_MAX=${process.env.PG_POOL_MAX || '10'}`,
+    `MSSQL_POOL_MAX=${process.env.MSSQL_POOL_MAX || '10'}`,
   ];
   fs.writeFileSync(envPath, lines.join('\n') + '\n');
 
@@ -286,6 +353,12 @@ app.post('/api/migrate', async (req, res) => {
     await ensureSchema(pgPool);
     broadcast('status', { step: 'Schema applied' });
 
+    // Drop FK constraints so inserts don't fail on load order
+    if (!dryRun) {
+      await dropAllForeignKeys(pgPool);
+      broadcast('status', { step: 'FK constraints dropped for data load' });
+    }
+
     const migOpts = getMigrationOptions();
     const opts = {
       batchSize: parseInt(req.body?.batchSize || migOpts.batchSize, 10),
@@ -304,6 +377,12 @@ app.post('/api/migrate', async (req, res) => {
       logLevel: opts.logLevel,
       dryRun: opts.dryRun,
     });
+
+    // Restore FK constraints after all data is loaded
+    if (!dryRun) {
+      broadcast('status', { step: 'Restoring FK constraints...' });
+      await restoreForeignKeys(pgPool);
+    }
 
     // Validation
     let checks = [];

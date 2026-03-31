@@ -37,6 +37,7 @@
 | # | File | Bug | Fix Applied |
 |---|---|---|---|
 | 8 | mappings.js | `Drugs_Purchased` query selected `Purchase_Date` which doesn't exist in source table → query failed with 0 rows FAIL | Changed to `NULL AS Purchase_Date`; target column is nullable |
+| 9 | mappings.js | `Drugs_Given.Units_Given` had 2 rows with negative values → violated `treatments.dose CHECK(dose >= 0)` → 2 errors, source/target row count mismatch | Transform now maps negative dose to `null` (unknown, not zero) |
 
 ## Validation Gaps (now covered)
 

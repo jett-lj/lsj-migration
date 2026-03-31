@@ -61,14 +61,10 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
 
   // Truncate target tables to ensure clean migration (avoids duplicates on re-run)
   if (!dryRun && !tables) {
-    log.info('Truncating all target tables for clean migration...');
-    await pgPool.query(`
-      TRUNCATE breeds, pens, contacts, diseases, drugs, cost_codes, market_categories,
-               purchase_lots, cows, weighing_events, pen_movements, treatments, costs,
-               health_records, carcase_data, autopsy_records, vendor_declarations,
-               drug_purchases, drug_disposals, legacy_raw,
-               migration_log CASCADE
-    `);
+    const allTargets = [...new Set(toRun.map(m => m.targetTable))];
+    allTargets.push('legacy_raw', 'migration_log');
+    log.info(`Truncating ${allTargets.length} target tables for clean migration...`);
+    await pgPool.query(`TRUNCATE ${allTargets.join(', ')} CASCADE`);
   } else if (!dryRun && tables) {
     const targets = toRun.map(m => m.targetTable);
     log.info(`Truncating selected tables: ${targets.join(', ')}`);
@@ -97,35 +93,72 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
     );
     results.push(...groupResults);
 
-    // Build lookups after the entire order group completes
+    // Build lookups after the entire order group completes.
+    // In dry-run mode, PG tables are empty so we build lookups from the source instead.
     const tables = new Set(group.map(m => m.targetTable));
     if (tables.has('breeds')) {
-      lookups.breeds    = await buildLookup(pgPool, 'breeds', 'id', 'name');
+      if (dryRun) {
+        lookups.breeds = await buildLookupFromSource(mssqlPool, 'Breeds', 'Breed_Code', 'Breed_Name');
+      } else {
+        lookups.breeds = await buildLookup(pgPool, 'breeds', 'id', 'name');
+      }
       lookups.breedIdMap = await buildIdLookup(mssqlPool, pgPool, 'breeds');
     }
     if (tables.has('contacts')) {
-      lookups.contactIdSet = await buildIdSet(pgPool, 'contacts');
+      if (dryRun) {
+        lookups.contactIdSet = await buildIdSetFromSource(mssqlPool, 'Contacts', 'Contact_ID');
+      } else {
+        lookups.contactIdSet = await buildIdSet(pgPool, 'contacts');
+      }
     }
     if (tables.has('pens')) {
-      lookups.penIdMap = await buildLookup(pgPool, 'pens', 'name', 'id');
+      if (dryRun) {
+        lookups.penIdMap = await buildLookupFromSource(mssqlPool, 'FeedDB_Pens_File', 'Pen_name', 'Pen_name', true);
+      } else {
+        lookups.penIdMap = await buildLookup(pgPool, 'pens', 'name', 'id');
+      }
     }
     if (tables.has('diseases')) {
-      lookups.diseaseIdSet = await buildIdSet(pgPool, 'diseases');
+      if (dryRun) {
+        lookups.diseaseIdSet = await buildIdSetFromSource(mssqlPool, 'Diseases', 'Disease_ID');
+      } else {
+        lookups.diseaseIdSet = await buildIdSet(pgPool, 'diseases');
+      }
     }
     if (tables.has('drugs')) {
-      lookups.drugIdSet = await buildIdSet(pgPool, 'drugs');
+      if (dryRun) {
+        lookups.drugIdSet = await buildIdSetFromSource(mssqlPool, 'Drugs', 'Drug_ID');
+      } else {
+        lookups.drugIdSet = await buildIdSet(pgPool, 'drugs');
+      }
     }
     if (tables.has('purchase_lots')) {
-      lookups.purchLotIdMap = await buildLookup(pgPool, 'purchase_lots', 'lot_number', 'id');
+      if (dryRun) {
+        lookups.purchLotIdMap = await buildLookupFromSource(mssqlPool, 'Purchase_Lots', 'Lot_Number', 'ID');
+      } else {
+        lookups.purchLotIdMap = await buildLookup(pgPool, 'purchase_lots', 'lot_number', 'id');
+      }
     }
     if (tables.has('cost_codes')) {
-      lookups.costCodeMap = await buildLookup(pgPool, 'cost_codes', 'code', 'id');
+      if (dryRun) {
+        lookups.costCodeMap = await buildLookupFromSource(mssqlPool, 'Cost_Codes', 'RevExp_Code', 'RevExp_Code', true);
+      } else {
+        lookups.costCodeMap = await buildLookup(pgPool, 'cost_codes', 'code', 'id');
+      }
     }
     if (tables.has('cows')) {
-      lookups.cowIdMap = await buildCowIdMap(pgPool);
+      if (dryRun) {
+        lookups.cowIdMap = await buildCowIdMapFromSource(mssqlPool);
+      } else {
+        lookups.cowIdMap = await buildCowIdMap(pgPool);
+      }
     }
     if (tables.has('health_records')) {
-      lookups.sbRecNoMap = await buildSbRecNoMap(mssqlPool, pgPool);
+      if (dryRun) {
+        lookups.sbRecNoMap = await buildSbRecNoMapFromSource(mssqlPool);
+      } else {
+        lookups.sbRecNoMap = await buildSbRecNoMap(pgPool);
+      }
     }
   }
 
@@ -321,7 +354,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         row.cost_code_id = lookups.costCodeMap[row._cost_code] || null;
       }
 
-      // Resolve health_record_id for treatments
+      // Resolve health_record_id from SB_Rec_No for treatments
       if (row._sb_rec_no !== undefined && lookups.sbRecNoMap) {
         row.health_record_id = lookups.sbRecNoMap[row._sb_rec_no] || null;
       }
@@ -522,23 +555,66 @@ async function buildCowIdMap(pgPool) {
   return map;
 }
 
+async function buildSbRecNoMap(pgPool) {
+  const res = await pgPool.query('SELECT id, legacy_sb_rec_no FROM health_records WHERE legacy_sb_rec_no IS NOT NULL');
+  const map = {};
+  for (const row of res.rows) {
+    map[row.legacy_sb_rec_no] = row.id;
+  }
+  return map;
+}
+
 async function buildIdSet(pgPool, table) {
   const res = await pgPool.query(`SELECT id FROM ${table}`);
   return new Set(res.rows.map(r => r.id));
 }
 
-/**
- * Build a map from legacy SB_Rec_No → health_records.id.
- * Uses the stored legacy_sb_rec_no column for a direct lookup
- * instead of fragile positional zipping.
- */
-async function buildSbRecNoMap(_mssqlPool, pgPool) {
-  const res = await pgPool.query(
-    'SELECT legacy_sb_rec_no, id FROM health_records WHERE legacy_sb_rec_no IS NOT NULL'
+// ── Source-based lookup builders (for dry-run mode) ──
+
+/** Build a key→value map directly from SQL Server source table */
+async function buildLookupFromSource(mssqlPool, sourceTable, keyCol, valueCol, useKeyAsValue = false) {
+  const res = await mssqlPool.request().query(
+    `SELECT [${keyCol}], [${valueCol}] FROM [dbo].[${sourceTable}]`
   );
   const map = {};
-  for (const row of res.rows) {
-    map[row.legacy_sb_rec_no] = row.id;
+  let syntheticId = 1;
+  for (const row of res.recordset) {
+    const k = typeof row[keyCol] === 'string' ? row[keyCol].trim() : row[keyCol];
+    map[k] = useKeyAsValue ? syntheticId++ : row[valueCol];
+  }
+  return map;
+}
+
+/** Build an ID set directly from SQL Server source table */
+async function buildIdSetFromSource(mssqlPool, sourceTable, idCol) {
+  const res = await mssqlPool.request().query(
+    `SELECT [${idCol}] FROM [dbo].[${sourceTable}]`
+  );
+  return new Set(res.recordset.map(r => r[idCol]));
+}
+
+/** Build BeastID → synthetic cow ID map from SQL Server (dry-run) */
+async function buildCowIdMapFromSource(mssqlPool) {
+  const res = await mssqlPool.request().query(
+    `SELECT DISTINCT BeastID FROM [dbo].[Cattle] WHERE BeastID IS NOT NULL`
+  );
+  const map = {};
+  let syntheticId = 1;
+  for (const row of res.recordset) {
+    map[row.BeastID] = syntheticId++;
+  }
+  return map;
+}
+
+/** Build SB_Rec_No → synthetic health_record ID map from SQL Server (dry-run) */
+async function buildSbRecNoMapFromSource(mssqlPool) {
+  const res = await mssqlPool.request().query(
+    `SELECT DISTINCT SB_Rec_No FROM [dbo].[Sick_Beast_Records] WHERE SB_Rec_No IS NOT NULL`
+  );
+  const map = {};
+  let syntheticId = 1;
+  for (const row of res.recordset) {
+    map[row.SB_Rec_No] = syntheticId++;
   }
   return map;
 }
@@ -656,7 +732,6 @@ async function validateMigration(mssqlPool, pgPool) {
     { table: 'costs',           fk: 'cow_id',        ref: 'cows',       refCol: 'id' },
     { table: 'costs',           fk: 'cost_code_id',  ref: 'cost_codes', refCol: 'id' },
     { table: 'health_records',  fk: 'cow_id', ref: 'cows', refCol: 'id' },
-    { table: 'health_records',  fk: 'disease_id', ref: 'diseases', refCol: 'id' },
     { table: 'treatments',      fk: 'health_record_id', ref: 'health_records', refCol: 'id' },
     { table: 'purchase_lots',   fk: 'vendor_id', ref: 'contacts', refCol: 'id' },
     { table: 'purchase_lots',   fk: 'agent_id',  ref: 'contacts', refCol: 'id' },
@@ -1208,5 +1283,9 @@ module.exports = {
   compareDatabases,
   buildLookup,
   buildCowIdMap,
+  buildCowIdMapFromSource,
+  buildSbRecNoMapFromSource,
+  buildLookupFromSource,
+  buildIdSetFromSource,
   createLogger,
 };

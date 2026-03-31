@@ -65,11 +65,79 @@ function pgConfig() {
 
 // ── Apply schema before migration ───────────────────
 
+const FK_BLOCK_REGEX = /ALTER TABLE (\S+) DROP CONSTRAINT IF EXISTS (\S+);\s*\nALTER TABLE \S+ ADD CONSTRAINT \S+\s*\n\s*FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+
 async function ensureSchema(pgPool) {
   const schemaPath = path.join(__dirname, 'schema-farm.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
-  await pgPool.query(schema);
-  console.log('[INFO] PostgreSQL schema applied.');
+  // Strip FK constraint blocks — they are restored after data load by restoreForeignKeys()
+  const schemaWithoutFks = schema.replace(FK_BLOCK_REGEX, '');
+  await pgPool.query(schemaWithoutFks);
+  console.log('[INFO] PostgreSQL schema applied (FKs deferred).');
+}
+
+// ── FK constraint helpers (drop before load, restore after) ──
+
+async function dropAllForeignKeys(pgPool) {
+  const { rows } = await pgPool.query(`
+    SELECT tc.table_name, tc.constraint_name
+    FROM information_schema.table_constraints tc
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_schema = 'public'
+    ORDER BY tc.table_name
+  `);
+  for (const { table_name, constraint_name } of rows) {
+    await pgPool.query(`ALTER TABLE "${table_name}" DROP CONSTRAINT IF EXISTS "${constraint_name}"`);
+  }
+  console.log(`[INFO] Dropped ${rows.length} FK constraints for clean data load.`);
+}
+
+async function restoreForeignKeys(pgPool) {
+  const schemaPath = path.join(__dirname, 'schema-farm.sql');
+  const schema = fs.readFileSync(schemaPath, 'utf8');
+
+  // Extract ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY blocks
+  const fkBlocks = [...schema.matchAll(FK_BLOCK_REGEX)];
+
+  // Add each FK constraint with NOT VALID (skips existing-data check)
+  let added = 0;
+  const failures = [];
+  for (const match of fkBlocks) {
+    const block = match[0];
+    // Append NOT VALID before the final semicolon of the ADD CONSTRAINT
+    const notValidBlock = block.replace(
+      /(REFERENCES\s+[^;]+?)(;)\s*$/,
+      '$1 NOT VALID$2'
+    );
+    try {
+      await pgPool.query(notValidBlock);
+      added++;
+    } catch (err) {
+      failures.push({ constraint: match[2], error: err.message });
+    }
+  }
+  console.log(`[INFO] FK constraints added (NOT VALID): ${added}/${fkBlocks.length}`);
+
+  // Now validate each constraint — this checks existing data and logs failures
+  const { rows } = await pgPool.query(`
+    SELECT conrelid::regclass AS table_name, conname AS constraint_name
+    FROM pg_constraint
+    WHERE contype = 'f' AND NOT convalidated AND connamespace = 'public'::regnamespace
+  `);
+  let validated = 0;
+  for (const { table_name, constraint_name } of rows) {
+    try {
+      await pgPool.query(`ALTER TABLE ${table_name} VALIDATE CONSTRAINT "${constraint_name}"`);
+      validated++;
+    } catch (err) {
+      console.warn(`[WARN] FK validation failed: ${table_name}.${constraint_name} — ${err.message}`);
+      failures.push({ constraint: constraint_name, error: err.message });
+    }
+  }
+  console.log(`[INFO] FK constraints validated: ${validated}/${rows.length}`);
+  if (failures.length > 0) {
+    console.warn(`[WARN] ${failures.length} FK constraint(s) have orphaned data — constraints added but not fully validated.`);
+  }
 }
 
 // ── Main ────────────────────────────────────────────
@@ -173,6 +241,11 @@ async function main() {
     tables:    cliArgs.tables,
   };
 
+  // Drop FK constraints so inserts don't fail on load order
+  if (!opts.dryRun) {
+    await dropAllForeignKeys(pgPool);
+  }
+
   const { results } = await runMigration(mssqlPool, pgPool, opts);
 
   // Migrate raw tables (legacy_raw JSONB catch-all)
@@ -186,13 +259,23 @@ async function main() {
     });
   }
 
+  // Restore FK constraints after all data is loaded
+  let hasFailures = false;
+  if (!opts.dryRun) {
+    try {
+      await restoreForeignKeys(pgPool);
+    } catch (err) {
+      console.error('[ERROR] Failed to restore FK constraints:', err.message);
+      hasFailures = true;
+    }
+  }
+
   // Summary
   console.log('\n=== Migration Summary — Mapped Tables ===\n');
   console.log('Table'.padEnd(25) + 'Read'.padStart(10) + 'Written'.padStart(10) +
               'Skipped'.padStart(10) + 'Errors'.padStart(10) + '  Status');
   console.log('-'.repeat(75));
 
-  let hasFailures = false;
   for (const r of results) {
     console.log(
       r.table.padEnd(25) +

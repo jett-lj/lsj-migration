@@ -39,7 +39,7 @@ function getMssqlConfig() {
       connectionTimeout:  parseInt(process.env.MSSQL_CONNECTION_TIMEOUT || '30000', 10),
     },
     pool: {
-      max: 10,
+      max: parseInt(process.env.MSSQL_POOL_MAX || '10'),
       min: 1,
       idleTimeoutMillis: 30000,
     },

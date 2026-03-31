@@ -15,7 +15,9 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 
 const fs   = require('fs');
 const path = require('path');
-const { Pool } = require('pg');
+const pg   = require('pg');
+const { Pool } = pg;
+pg.types.setTypeParser(1700, parseFloat);   // NUMERIC → JS number
 
 // Modules under test
 const {
@@ -27,7 +29,8 @@ const {
 const {
   runMigration, migrateTable, processBatch,
   validateMigration, preFlightAudit, migrateRawTables, reconciliationReport,
-  buildLookup, buildCowIdMap, createLogger,
+  buildLookup, buildCowIdMap, buildCowIdMapFromSource, buildSbRecNoMapFromSource,
+  buildLookupFromSource, buildIdSetFromSource, createLogger,
 } = require('../runner');
 
 const { getMssqlConfig, getMigrationOptions } = require('../config');
@@ -96,13 +99,24 @@ function createMockMssql(tables) {
     request() {
       return {
         async query(sql) {
-          // Handle COUNT(*) queries (used by pagination for progress reporting)
-          if (/SELECT\s+COUNT\s*\(\s*\*\s*\)/i.test(sql)) {
+          // Match table names using dbo. prefix with boundary check to avoid
+          // 'dbo.Cattle' matching 'dbo.Cattle_Program_Types'
+          // Handles both dbo.Table and [dbo].[Table] formats
+          function findTable(sql) {
             for (const tableName of sortedKeys) {
-              if (sql.includes(tableName)) {
-                return { recordset: [{ cnt: tables[tableName].length }] };
+              const escaped = tableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const re = new RegExp(`\\[?dbo\\]?\\.\\[?${escaped}\\]?(?![a-zA-Z0-9_])`);
+              if (re.test(sql)) {
+                return tableName;
               }
             }
+            return null;
+          }
+
+          // Handle COUNT(*) queries (used by pagination for progress reporting)
+          if (/SELECT\s+COUNT\s*\(\s*\*\s*\)/i.test(sql)) {
+            const tbl = findTable(sql);
+            if (tbl) return { recordset: [{ cnt: tables[tbl].length }] };
             return { recordset: [{ cnt: 0 }] };
           }
 
@@ -112,18 +126,17 @@ function createMockMssql(tables) {
           // Handle OFFSET/FETCH pagination queries
           const offsetMatch = sql.match(/OFFSET\s+(\d+)\s+ROWS\s+FETCH\s+NEXT\s+(\d+)\s+ROWS\s+ONLY/i);
 
-          for (const tableName of sortedKeys) {
-            if (sql.includes(tableName)) {
-              let rows = tables[tableName];
-              if (offsetMatch) {
-                const offset = parseInt(offsetMatch[1]);
-                const limit = parseInt(offsetMatch[2]);
-                rows = rows.slice(offset, offset + limit);
-              } else if (topMatch) {
-                rows = rows.slice(0, parseInt(topMatch[1]));
-              }
-              return { recordset: rows };
+          const tbl = findTable(sql);
+          if (tbl) {
+            let rows = tables[tbl];
+            if (offsetMatch) {
+              const offset = parseInt(offsetMatch[1]);
+              const limit = parseInt(offsetMatch[2]);
+              rows = rows.slice(offset, offset + limit);
+            } else if (topMatch) {
+              rows = rows.slice(0, parseInt(topMatch[1]));
             }
+            return { recordset: rows };
           }
           return { recordset: [] };
         },
@@ -349,8 +362,9 @@ describe('Migration runner â€” integration', () => {
     // Clean all data tables before each test
     const tables = [
       'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'cows',
+      'health_records', 'weighing_events',
       'carcase_data', 'autopsy_records',
+      'cows',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
       'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
@@ -873,9 +887,9 @@ describe('Migration runner â€” integration', () => {
 
       expect(result.rowsWritten).toBe(3);
       const rows = await pgPool.query('SELECT code, type FROM cost_codes ORDER BY code');
-      expect(rows.rows[0]).toMatchObject({ code: 1, type: 'expense' });
-      expect(rows.rows[1]).toMatchObject({ code: 2, type: 'revenue' });
-      expect(rows.rows[2]).toMatchObject({ code: 3, type: 'expense' });
+      expect(rows.rows[0]).toMatchObject({ code: '1', type: 'expense' });
+      expect(rows.rows[1]).toMatchObject({ code: '2', type: 'revenue' });
+      expect(rows.rows[2]).toMatchObject({ code: '3', type: 'expense' });
     });
 
     it('resolves cost_code_id when migrating costs rows', async () => {
@@ -920,7 +934,7 @@ describe('Migration runner â€” integration', () => {
       expect(costs.rows[0].units).toBe(50);
 
       // cost_code_id must be resolved â€” never null
-      const ccRes = await pgPool.query('SELECT id FROM cost_codes WHERE code = 10');
+      const ccRes = await pgPool.query("SELECT id FROM cost_codes WHERE code = '10'");
       expect(costs.rows[0].cost_code_id).toBe(ccRes.rows[0].id);
     });
 
@@ -1138,8 +1152,9 @@ describe('Post-migration validation', () => {
     // Clean data from any prior tests
     const cleanTables = [
       'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'cows',
+      'health_records', 'weighing_events',
       'carcase_data', 'autopsy_records',
+      'cows',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
       'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
@@ -1457,7 +1472,7 @@ describe('Schema integrity', () => {
     expect(idxNames).toContain('idx_cows_tag');
     expect(idxNames).toContain('idx_cows_eid');
     expect(idxNames).toContain('idx_cows_status');
-    expect(idxNames).toContain('idx_cows_legacy_id');
+    expect(idxNames).toContain('idx_cows_legacy_beast_id');
     expect(idxNames).toContain('idx_weigh_cow');
     expect(idxNames).toContain('idx_weigh_date');
     expect(idxNames).toContain('idx_treat_cow');
@@ -1514,7 +1529,7 @@ describe('Table categories', () => {
   it('getCategorySummary returns correct groups', () => {
     const { mapped, raw, excluded } = getCategorySummary();
     expect(mapped.length).toBeGreaterThanOrEqual(14); // original + new
-    expect(raw.length).toBeGreaterThan(0);
+    expect(raw.length).toBeGreaterThanOrEqual(0);
     expect(excluded.length).toBeGreaterThan(0);
     expect(mapped.length + raw.length + excluded.length).toBe(Object.keys(TABLE_CATEGORIES).length);
   });
@@ -1541,8 +1556,9 @@ describe('New table mappings', () => {
   beforeEach(async () => {
     const tables = [
       'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'cows',
+      'health_records', 'weighing_events',
       'carcase_data', 'autopsy_records',
+      'cows',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
       'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
@@ -1739,35 +1755,38 @@ describe('New table mappings', () => {
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Raw table migration', () => {
+  // Temporarily add test-only raw entries since all real tables are now mapped
+  const RAW_TEST_TABLES = ['_RawTest_A', '_RawTest_B', '_RawTest_C'];
+
   beforeEach(async () => {
     await pgPool.query('DELETE FROM legacy_raw');
     await pgPool.query('DELETE FROM migration_log');
+    for (const t of RAW_TEST_TABLES) TABLE_CATEGORIES[t] = { strategy: 'raw' };
+  });
+
+  afterEach(() => {
+    for (const t of RAW_TEST_TABLES) delete TABLE_CATEGORIES[t];
   });
 
   it('copies arbitrary data to legacy_raw as JSONB', async () => {
     const mock = createMockMssql({
-      'Beast_Breeding': [
+      '_RawTest_A': [
         { Beast_ID: 100, Birth_Date: '2022-01-15', Birth_Wght: 35, Sire: 1, Dam: 2, Genetics: 1, Notes: 'test' },
         { Beast_ID: 101, Birth_Date: '2022-02-01', Birth_Wght: 38, Sire: 1, Dam: 3, Genetics: 2, Notes: null },
       ],
     });
 
-    // migrateRawTables migrates all 'raw' category tables
-    // We need the mock to respond to SELECT * FROM [dbo].[tableName]
-    // The existing mock matches by table name in query string
     const results = await migrateRawTables(mock, pgPool, {
       batchSize: 100, logLevel: 'error', dryRun: false,
     });
 
-    // Find Beast_Breeding result
-    const bbResult = results.find(r => r.table === 'Beast_Breeding');
+    const bbResult = results.find(r => r.table === '_RawTest_A');
     expect(bbResult).toBeTruthy();
     expect(bbResult.rowsRead).toBe(2);
     expect(bbResult.rowsWritten).toBe(2);
 
-    // Verify JSONB data in legacy_raw
     const res = await pgPool.query(
-      "SELECT * FROM legacy_raw WHERE source_table = 'Beast_Breeding' ORDER BY id"
+      "SELECT * FROM legacy_raw WHERE source_table = '_RawTest_A' ORDER BY id"
     );
     expect(res.rows).toHaveLength(2);
     expect(res.rows[0].row_data.Beast_ID).toBe(100);
@@ -1776,14 +1795,14 @@ describe('Raw table migration', () => {
 
   it('logs raw migrations to migration_log', async () => {
     const mock = createMockMssql({
-      'BodySystems': [{ ID: 1, Name: 'Respiratory' }],
+      '_RawTest_B': [{ ID: 1, Name: 'Respiratory' }],
     });
 
     await migrateRawTables(mock, pgPool, {
       batchSize: 100, logLevel: 'error', dryRun: false,
     });
 
-    const res = await pgPool.query("SELECT * FROM migration_log WHERE source_table = 'BodySystems'");
+    const res = await pgPool.query("SELECT * FROM migration_log WHERE source_table = '_RawTest_B'");
     expect(res.rows.length).toBeGreaterThanOrEqual(1);
     expect(res.rows[0].status).toBe('completed');
     expect(res.rows[0].rows_read).toBe(1);
@@ -1791,17 +1810,17 @@ describe('Raw table migration', () => {
 
   it('dry-run does not write raw data', async () => {
     const mock = createMockMssql({
-      'Sire_Lines': [{ ID: 1, Name: 'Test' }],
+      '_RawTest_C': [{ ID: 1, Name: 'Test' }],
     });
 
     const results = await migrateRawTables(mock, pgPool, {
       batchSize: 100, logLevel: 'error', dryRun: true,
     });
 
-    const slResult = results.find(r => r.table === 'Sire_Lines');
+    const slResult = results.find(r => r.table === '_RawTest_C');
     expect(slResult.rowsRead).toBe(1);
 
-    const res = await pgPool.query("SELECT COUNT(*) AS cnt FROM legacy_raw WHERE source_table = 'Sire_Lines'");
+    const res = await pgPool.query("SELECT COUNT(*) AS cnt FROM legacy_raw WHERE source_table = '_RawTest_C'");
     expect(parseInt(res.rows[0].cnt)).toBe(0);
   });
 
@@ -1888,8 +1907,9 @@ describe('Reconciliation report', () => {
   beforeEach(async () => {
     const tables = [
       'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'cows',
+      'health_records', 'weighing_events',
       'carcase_data', 'autopsy_records',
+      'cows',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
       'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
@@ -1936,8 +1956,9 @@ describe('Large-dataset pagination', () => {
   beforeEach(async () => {
     const tables = [
       'costs', 'pen_movements', 'treatments',
-      'health_records', 'weighing_events', 'cows',
+      'health_records', 'weighing_events',
       'carcase_data', 'autopsy_records',
+      'cows',
       'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
       'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
       'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
@@ -2048,28 +2069,33 @@ describe('Large-dataset pagination', () => {
   });
 
   it('raw migration paginates large tables correctly', async () => {
+    // Temporarily add a raw table for testing raw pagination
+    TABLE_CATEGORIES['_RawPaginTest'] = { strategy: 'raw' };
+
     // Generate 500 rows for a raw table
     const rawRows = [];
     for (let i = 1; i <= 500; i++) {
       rawRows.push({ ID: i, Name: `Item_${i}`, Value: i * 1.5 });
     }
 
-    const mock = createMockMssql({ 'Beast_Breeding': rawRows });
+    const mock = createMockMssql({ '_RawPaginTest': rawRows });
 
     const results = await migrateRawTables(mock, pgPool, {
       batchSize: 75, logLevel: 'error', dryRun: false,
     });
 
-    const bbResult = results.find(r => r.table === 'Beast_Breeding');
+    const bbResult = results.find(r => r.table === '_RawPaginTest');
     expect(bbResult).toBeTruthy();
     expect(bbResult.rowsRead).toBe(500);
     expect(bbResult.rowsWritten).toBe(500);
     expect(bbResult.status).toBe('completed');
 
     const res = await pgPool.query(
-      "SELECT COUNT(*) AS cnt FROM legacy_raw WHERE source_table = 'Beast_Breeding'"
+      "SELECT COUNT(*) AS cnt FROM legacy_raw WHERE source_table = '_RawPaginTest'"
     );
     expect(parseInt(res.rows[0].cnt)).toBe(500);
+
+    delete TABLE_CATEGORIES['_RawPaginTest'];
   });
 
   it('pagination handles exact batch-size boundary correctly', async () => {
@@ -2090,6 +2116,207 @@ describe('Large-dataset pagination', () => {
 
     const res = await pgPool.query('SELECT COUNT(*) AS cnt FROM breeds');
     expect(parseInt(res.rows[0].cnt)).toBe(200);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// DRY-RUN LOOKUPS — cow-dependent tables must not be skipped
+// ═══════════════════════════════════════════════════════
+
+describe('Dry-run source-based lookups', () => {
+  beforeEach(async () => {
+    const tables = [
+      'costs', 'pen_movements', 'treatments',
+      'health_records', 'weighing_events',
+      'carcase_data', 'autopsy_records',
+      'cows',
+      'drug_purchases', 'drug_disposals', 'vendor_declarations', 'legacy_raw',
+      'purchase_lots', 'market_categories', 'cost_codes', 'drugs',
+      'diseases', 'contacts', 'pens', 'breeds', 'migration_log',
+    ];
+    for (const t of tables) {
+      await pgPool.query(`DELETE FROM ${t}`);
+    }
+  });
+
+  describe('buildCowIdMapFromSource', () => {
+    it('builds a BeastID → synthetic ID map from source', async () => {
+      const mock = createMockMssql({
+        'Cattle': [
+          { BeastID: 100 },
+          { BeastID: 200 },
+          { BeastID: 300 },
+        ],
+      });
+      const map = await buildCowIdMapFromSource(mock);
+      expect(Object.keys(map)).toHaveLength(3);
+      expect(map[100]).toBeDefined();
+      expect(map[200]).toBeDefined();
+      expect(map[300]).toBeDefined();
+    });
+  });
+
+  describe('buildSbRecNoMapFromSource', () => {
+    it('builds an SB_Rec_No → synthetic ID map from source', async () => {
+      const mock = createMockMssql({
+        'Sick_Beast_Records': [
+          { SB_Rec_No: 10 },
+          { SB_Rec_No: 20 },
+        ],
+      });
+      const map = await buildSbRecNoMapFromSource(mock);
+      expect(Object.keys(map)).toHaveLength(2);
+      expect(map[10]).toBeDefined();
+      expect(map[20]).toBeDefined();
+    });
+  });
+
+  describe('buildIdSetFromSource', () => {
+    it('builds an ID set from source table', async () => {
+      const mock = createMockMssql({
+        'Diseases': [
+          { Disease_ID: 1 },
+          { Disease_ID: 5 },
+          { Disease_ID: 9 },
+        ],
+      });
+      const set = await buildIdSetFromSource(mock, 'Diseases', 'Disease_ID');
+      expect(set.size).toBe(3);
+      expect(set.has(1)).toBe(true);
+      expect(set.has(5)).toBe(true);
+      expect(set.has(9)).toBe(true);
+      expect(set.has(2)).toBe(false);
+    });
+  });
+
+  it('dry-run migration resolves cow-dependent rows instead of skipping them', async () => {
+    const mock = createMockMssql({
+      'Breeds': [{ Breed_Code: 1, Breed_Name: 'Angus' }],
+      'FeedDB_Pens_File': [{ Pen_name: 'Pen1', IsPaddock: false }],
+      'Contacts': [],
+      'Diseases': [{ Disease_ID: 1, Disease_Name: 'BRD', Symptoms: null, Treatment: null, No_longer_used: false }],
+      'Drugs': [{ Drug_ID: 1, Drug_Name: 'Drug A', Units: 'mL', Cost_per_unit: 10, WithHold_days_1: 7, WithHold_days_ESI: 14, HGP: 'N', Antibiotic: 'N', Supplier: null, Inactive: false }],
+      'Cost_Codes': [{ RevExp_Code: 1, RevExp_Desc: 'Feed', Rev_Exp: 'E' }],
+      'Market_Category': [],
+      'Purchase_Lots': [],
+      'Cattle': [
+        { BeastID: 1, Ear_Tag: 'TAG001', EID: null, Breed: 1, Sex: 'S', HGP: false,
+          Died: false, Start_Date: null, Start_Weight: null,
+          Sale_Date: null, Sale_Weight: null, DOB: null,
+          Feedlot_Entry_Date: '2024-01-01', Feedlot_Entry_Wght: 300,
+          Pen_Number: 'Pen1', Notes: null, Purch_Lot_No: null, Date_Archived: null },
+        { BeastID: 2, Ear_Tag: 'TAG002', EID: null, Breed: 1, Sex: 'H', HGP: false,
+          Died: false, Start_Date: null, Start_Weight: null,
+          Sale_Date: null, Sale_Weight: null, DOB: null,
+          Feedlot_Entry_Date: '2024-02-01', Feedlot_Entry_Wght: 350,
+          Pen_Number: 'Pen1', Notes: null, Purch_Lot_No: null, Date_Archived: null },
+      ],
+      'Sick_Beast_Records': [
+        { Beast_ID: 1, Ear_Tag_No: 'TAG001', Date_Diagnosed: '2024-03-01', Disease_ID: 1,
+          Diagnosed_By: 'DrVet', Sick_Beast_Notes: 'Cough', Date_Recovered_Died: '2024-03-10',
+          Result_Code: 'R', SB_Rec_No: 100 },
+      ],
+      'Weighing_Events': [
+        { BeastID: 1, Weighing_Type: 1, Weigh_date: '2024-01-01', Weight: 300, P8_Fat: 5, Weigh_Note: 'intake', ID: 1 },
+        { BeastID: 2, Weighing_Type: 1, Weigh_date: '2024-02-01', Weight: 350, P8_Fat: 6, Weigh_Note: 'intake', ID: 2 },
+      ],
+      'PensHistory': [
+        { BeastID: 1, MoveDate: '2024-01-01', Pen: 'Pen1', ID: 1 },
+      ],
+      'Drugs_Given': [
+        { BeastID: 1, Drug_ID: 1, Units_Given: 5, Date_Given: '2024-03-01',
+          Withold_Until: '2024-03-08', SB_Rec_No: 100, User_Initials: 'AB', ID: 1 },
+      ],
+      'Costs': [
+        { BeastID: 1, RevExp_Code: 1, Trans_Date: '2024-02-01',
+          Rev_Exp_per_Unit: 5, Units: 10, Extended_RevExp: 50, ID: 1 },
+      ],
+      'Carcase_data': [],
+      'Autopsy_Records': [],
+      'Vendor_Declarations': [],
+      'Drugs_Purchased': [],
+      'Drug_Disposal': [],
+    });
+
+    const { results } = await runMigration(mock, pgPool, {
+      batchSize: 100, logLevel: 'error', dryRun: true,
+    });
+
+    // Cattle should report rows written (in dry-run terms)
+    const cattleResult = results.find(r => r.table === 'Cattle');
+    expect(cattleResult.rowsWritten).toBe(2);
+    expect(cattleResult.rowsSkipped).toBe(0);
+
+    // Cow-dependent tables should NOT be all-skipped
+    const weighResult = results.find(r => r.table === 'Weighing_Events');
+    expect(weighResult.rowsWritten).toBe(2);
+    expect(weighResult.rowsSkipped).toBe(0);
+
+    const pensResult = results.find(r => r.table === 'PensHistory');
+    expect(pensResult.rowsWritten).toBe(1);
+    expect(pensResult.rowsSkipped).toBe(0);
+
+    const drugsGivenResult = results.find(r => r.table === 'Drugs_Given');
+    expect(drugsGivenResult.rowsWritten).toBe(1);
+    expect(drugsGivenResult.rowsSkipped).toBe(0);
+
+    const costsResult = results.find(r => r.table === 'Costs');
+    expect(costsResult.rowsWritten).toBe(1);
+    expect(costsResult.rowsSkipped).toBe(0);
+
+    const sickResult = results.find(r => r.table === 'Sick_Beast_Records');
+    expect(sickResult.rowsWritten).toBe(1);
+    expect(sickResult.rowsSkipped).toBe(0);
+
+    // PG tables should remain empty (dry-run doesn't write)
+    const dbCows = await pgPool.query('SELECT COUNT(*) AS cnt FROM cows');
+    expect(parseInt(dbCows.rows[0].cnt)).toBe(0);
+
+    const dbWeigh = await pgPool.query('SELECT COUNT(*) AS cnt FROM weighing_events');
+    expect(parseInt(dbWeigh.rows[0].cnt)).toBe(0);
+  });
+
+  it('dry-run correctly identifies orphaned rows from source lookup', async () => {
+    const mock = createMockMssql({
+      'Breeds': [{ Breed_Code: 1, Breed_Name: 'Angus' }],
+      'FeedDB_Pens_File': [],
+      'Contacts': [],
+      'Diseases': [],
+      'Drugs': [],
+      'Cost_Codes': [],
+      'Market_Category': [],
+      'Purchase_Lots': [],
+      'Cattle': [
+        { BeastID: 1, Ear_Tag: 'TAG001', EID: null, Breed: 1, Sex: 'S', HGP: false,
+          Died: false, Start_Date: null, Start_Weight: null,
+          Sale_Date: null, Sale_Weight: null, DOB: null,
+          Feedlot_Entry_Date: '2024-01-01', Feedlot_Entry_Wght: 300,
+          Pen_Number: null, Notes: null, Purch_Lot_No: null, Date_Archived: null },
+      ],
+      'Sick_Beast_Records': [],
+      'Weighing_Events': [
+        // BeastID 1 exists — should be written
+        { BeastID: 1, Weighing_Type: 1, Weigh_date: '2024-01-01', Weight: 300, P8_Fat: 5, Weigh_Note: null, ID: 1 },
+        // BeastID 999 does NOT exist — should be skipped as orphan
+        { BeastID: 999, Weighing_Type: 2, Weigh_date: '2024-06-01', Weight: 400, P8_Fat: 8, Weigh_Note: null, ID: 2 },
+      ],
+      'PensHistory': [],
+      'Drugs_Given': [],
+      'Costs': [],
+      'Carcase_data': [],
+      'Autopsy_Records': [],
+      'Vendor_Declarations': [],
+      'Drugs_Purchased': [],
+      'Drug_Disposal': [],
+    });
+
+    const { results } = await runMigration(mock, pgPool, {
+      batchSize: 100, logLevel: 'error', dryRun: true,
+    });
+
+    const weighResult = results.find(r => r.table === 'Weighing_Events');
+    expect(weighResult.rowsWritten).toBe(1);  // BeastID 1
+    expect(weighResult.rowsSkipped).toBe(1);  // BeastID 999 orphaned
   });
 });
 

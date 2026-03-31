@@ -35,7 +35,7 @@ function connectPostgres(opts) {
   if (!opts) {
     throw new Error('PostgreSQL connection config required');
   }
-  _pgPool = new Pool({ ...opts, max: 10 });
+  _pgPool = new Pool({ ...opts, max: parseInt(process.env.PG_POOL_MAX || '10') });
   return _pgPool;
 }
 
