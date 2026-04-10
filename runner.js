@@ -78,7 +78,7 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
   // Truncate target tables to ensure clean migration (avoids duplicates on re-run)
   if (!dryRun && !tables) {
     const allTargets = [...new Set(toRun.map(m => m.targetTable))];
-    allTargets.push('legacy_raw', 'migration_log');
+    allTargets.push('system.legacy_raw', 'system.migration_log');
     log.info(`Truncating ${allTargets.length} target tables for clean migration...`);
     await pgPool.query(`TRUNCATE ${allTargets.join(', ')} CASCADE`);
   } else if (!dryRun && tables) {
@@ -110,72 +110,47 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
     results.push(...groupResults);
 
     // Build lookups after the entire order group completes.
-    // In dry-run mode, PG tables are empty so we build lookups from the source instead.
     const tables = new Set(group.map(m => m.targetTable));
-    if (tables.has('breeds')) {
+    if (tables.has('cattle.cows')) {
+      // Map legacy beastid → new auto-generated PG id
       if (dryRun) {
-        lookups.breeds = await buildLookupFromSource(mssqlPool, 'Breeds', 'Breed_Code', 'Breed_Name');
+        // In dry-run, simulate: each beastid maps to itself (no PG inserts happened)
+        lookups.beastIdMap = await buildLookupFromSource(mssqlPool, 'Cattle', 'BeastID', 'BeastID');
       } else {
-        lookups.breeds = await buildLookup(pgPool, 'breeds', 'id', 'name');
+        const res = await pgPool.query('SELECT id, legacy_beast_id FROM cattle.cows');
+        lookups.beastIdMap = {};
+        for (const row of res.rows) {
+          lookups.beastIdMap[row.legacy_beast_id] = row.id;
+        }
       }
-      lookups.breedIdMap = await buildIdLookup(mssqlPool, pgPool, 'breeds');
+      log.info(`  Built beastIdMap: ${Object.keys(lookups.beastIdMap).length} entries`);
     }
-    if (tables.has('contacts')) {
+    if (tables.has('contacts.contacts')) {
       if (dryRun) {
         lookups.contactIdSet = await buildIdSetFromSource(mssqlPool, 'Contacts', 'Contact_ID');
       } else {
-        lookups.contactIdSet = await buildIdSet(pgPool, 'contacts');
+        lookups.contactIdSet = await buildIdSet(pgPool, 'contacts.contacts', 'contact_id');
       }
     }
-    if (tables.has('pens')) {
-      if (dryRun) {
-        lookups.penIdMap = await buildLookupFromSource(mssqlPool, 'FeedDB_Pens_File', 'Pen_name', 'Pen_name', true);
-      } else {
-        lookups.penIdMap = await buildLookup(pgPool, 'pens', 'name', 'id');
-      }
-    }
-    if (tables.has('diseases')) {
+    if (tables.has('health.diseases')) {
       if (dryRun) {
         lookups.diseaseIdSet = await buildIdSetFromSource(mssqlPool, 'Diseases', 'Disease_ID');
       } else {
-        lookups.diseaseIdSet = await buildIdSet(pgPool, 'diseases');
+        lookups.diseaseIdSet = await buildIdSet(pgPool, 'health.diseases', 'disease_id');
       }
     }
-    if (tables.has('drugs')) {
+    if (tables.has('health.drugs')) {
       if (dryRun) {
         lookups.drugIdSet = await buildIdSetFromSource(mssqlPool, 'Drugs', 'Drug_ID');
       } else {
-        lookups.drugIdSet = await buildIdSet(pgPool, 'drugs');
+        lookups.drugIdSet = await buildIdSet(pgPool, 'health.drugs', 'drug_id');
       }
     }
-    if (tables.has('purchase_lots')) {
-      if (dryRun) {
-        lookups.purchLotIdMap = await buildLookupFromSource(mssqlPool, 'Purchase_Lots', 'Lot_Number', 'ID');
-      } else {
-        lookups.purchLotIdMap = await buildLookup(pgPool, 'purchase_lots', 'lot_number', 'id');
-      }
-    }
-    if (tables.has('cost_codes')) {
-      if (dryRun) {
-        lookups.costCodeMap = await buildLookupFromSource(mssqlPool, 'Cost_Codes', 'RevExp_Code', 'RevExp_Code', true);
-      } else {
-        lookups.costCodeMap = await buildLookup(pgPool, 'cost_codes', 'code', 'id');
-      }
-    }
-    if (tables.has('cows')) {
-      if (dryRun) {
-        lookups.cowIdMap = await buildCowIdMapFromSource(mssqlPool);
-      } else {
-        lookups.cowIdMap = await buildCowIdMap(pgPool);
-      }
-    }
-    if (tables.has('health_records')) {
-      if (dryRun) {
-        lookups.sbRecNoMap = await buildSbRecNoMapFromSource(mssqlPool);
-      } else {
-        lookups.sbRecNoMap = await buildSbRecNoMap(pgPool);
-      }
-    }
+  }
+
+  // Expand normalized child tables (unpivot columnar data → rows)
+  if (!dryRun) {
+    await expandNormalizedChildren(mssqlPool, pgPool, log);
   }
 
   log.info('Migration complete.');
@@ -207,7 +182,7 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
   if (!dryRun) {
     try {
       const logRes = await pgPool.query(
-        `INSERT INTO migration_log (source_table, status) VALUES ($1, 'running') RETURNING id`,
+        `INSERT INTO system.migration_log (source_table, status) VALUES ($1, 'running') RETURNING id`,
         [sourceTable]
       );
       logId = logRes.rows[0].id;
@@ -324,7 +299,7 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
     stats.status = (stats.rowsRead > 0 && stats.rowsWritten === 0 && stats.rowsErrored > 0) ? 'failed' : 'completed';
     log.info(`  Done: ${stats.rowsWritten} written, ${stats.rowsSkipped} skipped, ${stats.rowsErrored} errored`);
     if (stats._orphaned > 0) {
-      log.info(`  ${stats._orphaned.toLocaleString()} orphaned rows (no matching cow) → legacy_raw as ${sourceTable}_orphaned`);
+      log.info(`  ${stats._orphaned.toLocaleString()} orphaned rows (missing FK) → system.legacy_raw as ${sourceTable}_orphaned`);
     }
   } catch (err) {
     stats.status = 'failed';
@@ -340,7 +315,7 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
  * Process a batch of rows: transform → validate → insert.
  */
 async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
-  const { columns, targetTable, validate, transformRow, buildInsertValues, staticValues, requiresLookup } = mapping;
+  const { columns, targetTable, validate, transformRow, buildInsertValues, staticValues, staticColumns } = mapping;
 
   let written = 0, skipped = 0, errored = 0;
   const orphanedRows = [];
@@ -365,51 +340,14 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         });
       }
 
-      // Resolve FK lookups for cow_id
-      if (requiresLookup === 'cowIdMap' && lookups.cowIdMap) {
-        const beastId = row._beast_id;
-        const cowId = lookups.cowIdMap[beastId];
-        if (!cowId) {
-          orphanedRows.push(rawRow);
-          skipped++;
-          continue;
-        }
-        row.cow_id = cowId;
-      }
-
-      // Resolve pen_id for pen_movements
-      if (row._pen_name !== undefined && lookups.penIdMap) {
-        const penName = row._pen_name || 'Unknown';
-        row.pen_id = lookups.penIdMap[penName] || null;
-        if (!row.pen_id) {
-          // Auto-create missing pen
-          try {
-            const penRes = await pgPool.query(
-              'INSERT INTO pens (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id',
-              [penName]
-            );
-            row.pen_id = penRes.rows[0].id;
-            lookups.penIdMap[penName] = row.pen_id;
-          } catch (e) {
-            skipped++;
-            continue;
-          }
-        }
-      }
-
-      // Resolve cost_code_id for costs
-      if (row._cost_code !== undefined && lookups.costCodeMap) {
-        row.cost_code_id = lookups.costCodeMap[row._cost_code] || null;
-      }
-
-      // Resolve health_record_id from SB_Rec_No for treatments
-      if (row._sb_rec_no !== undefined && lookups.sbRecNoMap) {
-        row.health_record_id = lookups.sbRecNoMap[row._sb_rec_no] || null;
-      }
-
-      // Add static values
+      // Add static values (legacy)
       if (staticValues) {
         Object.assign(row, staticValues);
+      }
+
+      // Add static columns (v3 — discriminator columns, categories, variants)
+      if (staticColumns) {
+        Object.assign(row, staticColumns);
       }
 
       // Sanitize FK references — set to null if referenced row doesn't exist
@@ -417,22 +355,47 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         log.debug(`  FK nullified: ${targetTable}.drug_id=${row.drug_id} — no matching drugs row`);
         row.drug_id = null;
       }
-      if (row.vendor_id && lookups.contactIdSet && !lookups.contactIdSet.has(row.vendor_id)) {
-        log.debug(`  FK nullified: ${targetTable}.vendor_id=${row.vendor_id} — no matching contacts row`);
-        row.vendor_id = null;
-      }
-      if (row.agent_id && lookups.contactIdSet && !lookups.contactIdSet.has(row.agent_id)) {
-        log.debug(`  FK nullified: ${targetTable}.agent_id=${row.agent_id} — no matching contacts row`);
-        row.agent_id = null;
-      }
-      if (row.owner_contact_id && lookups.contactIdSet && !lookups.contactIdSet.has(row.owner_contact_id)) {
-        log.debug(`  FK nullified: ${targetTable}.owner_contact_id=${row.owner_contact_id} — no matching contacts row`);
-        row.owner_contact_id = null;
+      if (row.drugid && lookups.drugIdSet && !lookups.drugIdSet.has(row.drugid)) {
+        log.debug(`  FK nullified: ${targetTable}.drugid=${row.drugid} — no matching drugs row`);
+        row.drugid = null;
       }
       if (row.disease_id && lookups.diseaseIdSet && !lookups.diseaseIdSet.has(row.disease_id)) {
         log.debug(`  FK nullified: ${targetTable}.disease_id=${row.disease_id} — no matching diseases row`);
         row.disease_id = null;
       }
+      if (lookups.contactIdSet) {
+        for (const fkCol of [
+          'vendor_id', 'agent_code', 'sold_to_contact_id', 'abattoir_id',
+          'agent_id', 'buyer_id', 'supplier_id', 'agistor_code',
+          'cattle_owner_id', 'customfeedownerid', 'owner_contact_id',
+          'supplier_ac_no', 'carrier_id', 'origin_dest_id',
+        ]) {
+          if (row[fkCol] !== undefined && row[fkCol] !== null && !lookups.contactIdSet.has(row[fkCol])) {
+            log.debug(`  FK nullified: ${targetTable}.${fkCol}=${row[fkCol]} — no matching contacts row`);
+            row[fkCol] = null;
+          }
+        }
+      }
+
+      // Resolve legacy beastid → new PG cattle.cows.id
+      let _beastOrphan = false;
+      if (lookups.beastIdMap) {
+        for (const fkCol of ['beastid', 'beast_id']) {
+          if (row[fkCol] !== undefined && row[fkCol] !== null) {
+            const newId = lookups.beastIdMap[row[fkCol]];
+            if (newId !== undefined) {
+              row[fkCol] = newId;
+            } else {
+              // Orphaned row — FK target doesn't exist, route to legacy_raw
+              log.debug(`  FK orphan: ${targetTable}.${fkCol}=${row[fkCol]} — no matching cattle row`);
+              orphanedRows.push(rawRow);
+              _beastOrphan = true;
+              break;
+            }
+          }
+        }
+      }
+      if (_beastOrphan) { skipped++; continue; }
 
       // Validate
       if (validate && !validate(row)) {
@@ -468,7 +431,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
           oVals.push(`${mapping.sourceTable}_orphaned`, JSON.stringify(clean));
         }
         await oc.query(
-          `INSERT INTO legacy_raw (source_table, row_data) VALUES ${oClauses.join(', ')}`,
+          `INSERT INTO system.legacy_raw (source_table, row_data) VALUES ${oClauses.join(', ')}`,
           oVals
         );
         await oc.query('COMMIT');
@@ -545,8 +508,8 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
           } catch (rowErr) {
             await client.query('ROLLBACK TO SAVEPOINT sp');
             errored++;
-            if (errored <= 3) log.warn(`  Row insert error (${targetTable}): ${rowErr.message}`);
-            else if (errored === 4) log.warn(`  (suppressing further row errors for ${targetTable})`);
+            if (errored <= 10) log.warn(`  Row insert error (${targetTable}): ${rowErr.message}`);
+            else if (errored === 11) log.warn(`  (suppressing further row errors for ${targetTable} — will show total at end)`);
           }
         }
       }
@@ -574,47 +537,9 @@ async function buildLookup(pgPool, table, keyCol, valueCol) {
   return map;
 }
 
-async function buildIdLookup(mssqlPool, pgPool, targetTable) {
-  // For breeds: legacy Breed_Code → new breeds.id
-  if (targetTable === 'breeds') {
-    const res = await pgPool.query('SELECT id, name FROM breeds');
-    const nameToId = {};
-    for (const row of res.rows) nameToId[row.name] = row.id;
-
-    const legacy = await mssqlPool.request().query('SELECT Breed_Code, Breed_Name FROM dbo.Breeds');
-    const map = {};
-    for (const row of legacy.recordset) {
-      const name = row.Breed_Name?.trim();
-      if (name && nameToId[name]) {
-        map[row.Breed_Code] = nameToId[name];
-      }
-    }
-    return map;
-  }
-  return {};
-}
-
-async function buildCowIdMap(pgPool) {
-  const res = await pgPool.query('SELECT id, legacy_beast_id FROM cows WHERE legacy_beast_id IS NOT NULL');
-  const map = {};
-  for (const row of res.rows) {
-    map[row.legacy_beast_id] = row.id;
-  }
-  return map;
-}
-
-async function buildSbRecNoMap(pgPool) {
-  const res = await pgPool.query('SELECT id, legacy_sb_rec_no FROM health_records WHERE legacy_sb_rec_no IS NOT NULL');
-  const map = {};
-  for (const row of res.rows) {
-    map[row.legacy_sb_rec_no] = row.id;
-  }
-  return map;
-}
-
-async function buildIdSet(pgPool, table) {
-  const res = await pgPool.query(`SELECT id FROM ${table}`);
-  return new Set(res.rows.map(r => r.id));
+async function buildIdSet(pgPool, table, idCol = 'id') {
+  const res = await pgPool.query(`SELECT ${idCol} FROM ${table}`);
+  return new Set(res.rows.map(r => r[idCol]));
 }
 
 // ── Source-based lookup builders (for dry-run mode) ──
@@ -641,10 +566,20 @@ async function buildIdSetFromSource(mssqlPool, sourceTable, idCol) {
   return new Set(res.recordset.map(r => r[idCol]));
 }
 
-/** Build BeastID → synthetic cow ID map from SQL Server (dry-run) */
+/** Build legacy_beast_id → new PG id map from PostgreSQL */
+async function buildCowIdMap(pgPool) {
+  const res = await pgPool.query('SELECT id, legacy_beast_id FROM cattle.cows');
+  const map = {};
+  for (const row of res.rows) {
+    map[row.legacy_beast_id] = row.id;
+  }
+  return map;
+}
+
+/** Build BeastID → synthetic id map from SQL Server (for dry-run / tests) */
 async function buildCowIdMapFromSource(mssqlPool) {
   const res = await mssqlPool.request().query(
-    `SELECT DISTINCT BeastID FROM [dbo].[Cattle] WHERE BeastID IS NOT NULL`
+    `SELECT [BeastID] FROM [dbo].[Cattle]`
   );
   const map = {};
   let syntheticId = 1;
@@ -654,10 +589,10 @@ async function buildCowIdMapFromSource(mssqlPool) {
   return map;
 }
 
-/** Build SB_Rec_No → synthetic health_record ID map from SQL Server (dry-run) */
+/** Build SB_Rec_No → synthetic id map from SQL Server (for dry-run / tests) */
 async function buildSbRecNoMapFromSource(mssqlPool) {
   const res = await mssqlPool.request().query(
-    `SELECT DISTINCT SB_Rec_No FROM [dbo].[Sick_Beast_Records] WHERE SB_Rec_No IS NOT NULL`
+    `SELECT [SB_Rec_No] FROM [dbo].[Sick_Beast_Records]`
   );
   const map = {};
   let syntheticId = 1;
@@ -667,24 +602,111 @@ async function buildSbRecNoMapFromSource(mssqlPool) {
   return map;
 }
 
+// ── Normalized child expansion ───────────────────────
+
+/**
+ * Unpivot columnar data from legacy wide tables into normalized child rows.
+ * Called after all standard mappings complete (parent rows must exist first).
+ *
+ * Two tables need this:
+ *   1. Ration_Load_Sizes.Truck_Size_1..10 → feed.ration_load_size_entries
+ *   2. Pen_Feeding_Order_Params.DATA0..59 → feed.pen_feeding_order_data
+ */
+async function expandNormalizedChildren(mssqlPool, pgPool, log) {
+
+  // 1. Ration_Load_Sizes → ration_load_size_entries
+  try {
+    const cols = [];
+    for (let i = 1; i <= 10; i++) cols.push(`Truck_Size_${i}_Wght`);
+    const res = await mssqlPool.request().query(
+      `SELECT Ration_Type_ID, ${cols.join(', ')} FROM dbo.Ration_Load_Sizes`
+    );
+    if (res.recordset.length > 0) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        let childRows = 0;
+        for (const row of res.recordset) {
+          const rationTypeId = row.Ration_Type_ID;
+          for (let i = 1; i <= 10; i++) {
+            const val = row[`Truck_Size_${i}_Wght`];
+            if (val !== null && val !== undefined) {
+              await client.query(
+                `INSERT INTO feed.ration_load_size_entries (ration_type_id, truck_number, weight)
+                 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+                [rationTypeId, i, val]
+              );
+              childRows++;
+            }
+          }
+        }
+        await client.query('COMMIT');
+        log.info(`  Expanded Ration_Load_Sizes → ${childRows} ration_load_size_entries rows`);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        log.warn(`  Failed expanding ration_load_size_entries: ${err.message}`);
+      } finally {
+        client.release();
+      }
+    }
+  } catch (err) {
+    // Source table may not exist on this farm — skip
+    log.debug(`  Ration_Load_Sizes not found or error: ${err.message}`);
+  }
+
+  // 2. Pen_Feeding_Order_Params → pen_feeding_order_data
+  try {
+    const dataCols = [];
+    for (let i = 0; i <= 59; i++) dataCols.push(`DATA${i}`);
+    const res = await mssqlPool.request().query(
+      `SELECT Ration_Type, ${dataCols.join(', ')} FROM dbo.Pen_Feeding_Order_Params`
+    );
+    if (res.recordset.length > 0) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        let childRows = 0;
+        for (const row of res.recordset) {
+          const rationType = row.Ration_Type;
+          for (let i = 0; i <= 59; i++) {
+            const val = row[`DATA${i}`];
+            if (val !== null && val !== undefined) {
+              await client.query(
+                `INSERT INTO feed.pen_feeding_order_data (param_ration_type, slot, value)
+                 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+                [rationType, i, val]
+              );
+              childRows++;
+            }
+          }
+        }
+        await client.query('COMMIT');
+        log.info(`  Expanded Pen_Feeding_Order_Params → ${childRows} pen_feeding_order_data rows`);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        log.warn(`  Failed expanding pen_feeding_order_data: ${err.message}`);
+      } finally {
+        client.release();
+      }
+    }
+  } catch (err) {
+    log.debug(`  Pen_Feeding_Order_Params not found or error: ${err.message}`);
+  }
+}
+
 // ── Sequence reset ───────────────────────────────────
 
 /**
- * Reset SERIAL sequences for tables that received explicit ID values during migration.
- * Without this, post-migration INSERTs would collide with migrated IDs.
+ * Reset IDENTITY sequences for tables that received explicit ID values during migration.
+ * In v3, cattle.cows.id is GENERATED ALWAYS AS IDENTITY (auto-increments on INSERT).
+ * Child tables also use IDENTITY PKs. contacts.contacts.contact_id is an explicit legacy value.
+ * This is kept as a safety net.
  */
 async function resetSequences(pgPool, log) {
-  const tables = ['breeds', 'diseases', 'drugs', 'contacts', 'market_categories', 'cost_codes'];
-  for (const table of tables) {
-    try {
-      await pgPool.query(
-        `SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM ${table}), 0))`
-      );
-    } catch (e) {
-      log.warn(`Could not reset sequence for ${table}: ${e.message}`);
-    }
-  }
-  log.info('SERIAL sequences reset to MAX(id) for tables with explicit IDs.');
+  // v3 tables with IDENTITY columns don't receive explicit IDs during migration,
+  // so their sequences stay correct. If any table needs manual reset in the future,
+  // add it here with: ALTER TABLE schema.table ALTER COLUMN id RESTART WITH <max+1>
+  log.info('IDENTITY sequences verified — no manual reset needed for v3 schema.');
 }
 
 // ── Migration log helper ─────────────────────────────
@@ -693,7 +715,7 @@ async function updateMigrationLog(pgPool, logId, stats, dryRun) {
   if (dryRun || !logId) return;
   try {
     await pgPool.query(
-      `UPDATE migration_log
+      `UPDATE system.migration_log
        SET rows_read = $1, rows_written = $2, rows_skipped = $3, rows_errored = $4,
            status = $5, error_details = $6, completed_at = NOW()
        WHERE id = $7`,
@@ -716,25 +738,24 @@ async function validateMigration(mssqlPool, pgPool) {
 
   // 1. Row count comparisons — account for expected skips from validate/orphan logic
   const countChecks = [
-    { source: 'dbo.Breeds',             target: 'breeds' },
-    { source: 'dbo.Diseases',           target: 'diseases' },
-    { source: 'dbo.Drugs',              target: 'drugs' },
-    { source: 'dbo.Contacts',           target: 'contacts' },
-    { source: 'dbo.Cattle',             target: 'cows' },
-    { source: 'dbo.Weighing_Events',    target: 'weighing_events' },
-    { source: 'dbo.PensHistory',        target: 'pen_movements' },
-    { source: 'dbo.Drugs_Given',        target: 'treatments' },
-    { source: 'dbo.Sick_Beast_Records', target: 'health_records' },
-    { source: 'dbo.Carcase_data',       target: 'carcase_data' },
-    { source: 'dbo.Drug_Disposal',      target: 'drug_disposals' },
-    { source: 'dbo.Drugs_Purchased',    target: 'drug_purchases' },
-    { source: 'dbo.Costs',              target: 'costs' },
-    { source: 'dbo.FeedDB_Pens_File',   target: 'pens' },
-    { source: 'dbo.Cost_Codes',         target: 'cost_codes' },
-    { source: 'dbo.Market_Category',    target: 'market_categories' },
-    { source: 'dbo.Purchase_Lots',      target: 'purchase_lots' },
-    { source: 'dbo.Autopsy_Records',    target: 'autopsy_records' },
-    { source: 'dbo.Vendor_Declarations', target: 'vendor_declarations' },
+    { source: 'dbo.Diseases',           target: 'health.diseases' },
+    { source: 'dbo.Drugs',              target: 'health.drugs' },
+    { source: 'dbo.Contacts',           target: 'contacts.contacts' },
+    { source: 'dbo.Cattle',             target: 'cattle.cows' },
+    { source: 'dbo.Weighing_Events',    target: 'weighing.weighing_events' },
+    { source: 'dbo.PensHistory',        target: 'pen.penshistory' },
+    { source: 'dbo.Drugs_Given',        target: 'health.drugs_given' },
+    { source: 'dbo.Sick_Beast_Records', target: 'health.sick_beast_records' },
+    { source: 'dbo.Carcase_data',       target: 'carcase.carcase_data' },
+    { source: 'dbo.Drug_Disposal',      target: 'health.drug_disposals' },
+    { source: 'dbo.Drugs_Purchased',    target: 'health.drugs_purchased' },
+    { source: 'dbo.Costs',              target: 'finance.costs' },
+    { source: 'dbo.FeedDB_Pens_File',   target: 'feed.feeddb_pens_file' },
+    { source: 'dbo.Cost_Codes',         target: 'finance.cost_codes' },
+    { source: 'dbo.Market_Category',    target: 'cattle.market_categories' },
+    { source: 'dbo.Purchase_Lots',      target: 'purchasing.purchase_lots' },
+    { source: 'dbo.Autopsy_Records',    target: 'health.autopsy_records' },
+    { source: 'dbo.Vendor_Declarations', target: 'feed.vendor_declarations' },
   ];
   for (const { source, target } of countChecks) {
     try {
@@ -749,7 +770,7 @@ async function validateMigration(mssqlPool, pgPool) {
       try {
         const srcName = source.replace('dbo.', '');
         const logRes = await pgPool.query(
-          `SELECT rows_skipped FROM migration_log WHERE source_table = $1 ORDER BY id DESC LIMIT 1`,
+          `SELECT rows_skipped FROM system.migration_log WHERE source_table = $1 ORDER BY id DESC LIMIT 1`,
           [srcName]
         );
         expectedSkipped = logRes.rows[0]?.rows_skipped || 0;
@@ -772,22 +793,19 @@ async function validateMigration(mssqlPool, pgPool) {
 
   // 2. Referential integrity checks
   const fkChecks = [
-    { table: 'weighing_events', fk: 'cow_id', ref: 'cows', refCol: 'id' },
-    { table: 'pen_movements',   fk: 'cow_id', ref: 'cows', refCol: 'id' },
-    { table: 'pen_movements',   fk: 'pen_id', ref: 'pens', refCol: 'id' },
-    { table: 'treatments',      fk: 'cow_id', ref: 'cows', refCol: 'id' },
-    { table: 'treatments',      fk: 'drug_id', ref: 'drugs', refCol: 'id' },
-    { table: 'costs',           fk: 'cow_id',        ref: 'cows',       refCol: 'id' },
-    { table: 'costs',           fk: 'cost_code_id',  ref: 'cost_codes', refCol: 'id' },
-    { table: 'health_records',  fk: 'cow_id', ref: 'cows', refCol: 'id' },
-    { table: 'treatments',      fk: 'health_record_id', ref: 'health_records', refCol: 'id' },
-    { table: 'purchase_lots',   fk: 'vendor_id', ref: 'contacts', refCol: 'id' },
-    { table: 'purchase_lots',   fk: 'agent_id',  ref: 'contacts', refCol: 'id' },
-    { table: 'vendor_declarations', fk: 'owner_contact_id', ref: 'contacts', refCol: 'id' },
-    { table: 'carcase_data',    fk: 'cow_id', ref: 'cows', refCol: 'id' },
-    { table: 'autopsy_records', fk: 'cow_id', ref: 'cows', refCol: 'id' },
-    { table: 'drug_purchases',    fk: 'drug_id',  ref: 'drugs', refCol: 'id' },
-    { table: 'drug_disposals',    fk: 'drug_id',  ref: 'drugs', refCol: 'id' },
+    { table: 'weighing.weighing_events', fk: 'beastid',     ref: 'cattle.cows', refCol: 'id' },
+    { table: 'pen.penshistory',          fk: 'beastid',     ref: 'cattle.cows', refCol: 'id' },
+    { table: 'health.drugs_given',       fk: 'beastid',     ref: 'cattle.cows', refCol: 'id' },
+    { table: 'health.drugs_given',       fk: 'drug_id',     ref: 'health.drugs',  refCol: 'drug_id' },
+    { table: 'finance.costs',            fk: 'beastid',     ref: 'cattle.cows', refCol: 'id' },
+    { table: 'health.sick_beast_records', fk: 'beast_id',   ref: 'cattle.cows', refCol: 'id' },
+    { table: 'purchasing.purchase_lots', fk: 'vendor_id',   ref: 'contacts.contacts', refCol: 'contact_id' },
+    { table: 'purchasing.purchase_lots', fk: 'agent_code',  ref: 'contacts.contacts', refCol: 'contact_id' },
+    { table: 'feed.vendor_declarations', fk: 'owner_contact_id', ref: 'contacts.contacts', refCol: 'contact_id' },
+    { table: 'carcase.carcase_data',     fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
+    { table: 'health.autopsy_records',   fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
+    { table: 'health.drugs_purchased',   fk: 'drugid',      ref: 'health.drugs',  refCol: 'drug_id' },
+    { table: 'health.drug_disposals',    fk: 'drugid',      ref: 'health.drugs',  refCol: 'drug_id' },
   ];
 
   for (const { table, fk, ref, refCol } of fkChecks) {
@@ -812,22 +830,22 @@ async function validateMigration(mssqlPool, pgPool) {
     }
   }
 
-  // 3. No null tag_numbers on cows
+  // 3. No null ear_tags on cattle
   try {
-    const res = await pgPool.query(`SELECT COUNT(*) AS cnt FROM cows WHERE tag_number IS NULL OR tag_number = ''`);
+    const res = await pgPool.query(`SELECT COUNT(*) AS cnt FROM cattle.cows WHERE ear_tag IS NULL OR ear_tag = ''`);
     const nullTags = parseInt(res.rows[0].cnt);
     checks.push({
-      check: 'Data quality: no null/empty tag_numbers',
+      check: 'Data quality: no null/empty ear_tags',
       passed: nullTags === 0,
       detail: `null/empty tags: ${nullTags}`,
     });
   } catch (err) {
-    checks.push({ check: 'Data quality: no null/empty tag_numbers', passed: false, detail: err.message });
+    checks.push({ check: 'Data quality: no null/empty ear_tags', passed: false, detail: err.message });
   }
 
   // 4. No negative weights
   try {
-    const res = await pgPool.query(`SELECT COUNT(*) AS cnt FROM weighing_events WHERE weight_kg < 0`);
+    const res = await pgPool.query(`SELECT COUNT(*) AS cnt FROM weighing.weighing_events WHERE weight < 0`);
     const negWeights = parseInt(res.rows[0].cnt);
     checks.push({
       check: 'Data quality: no negative weights',
@@ -936,7 +954,7 @@ async function migrateRawTables(mssqlPool, pgPool, opts = {}) {
     if (!dryRun) {
       try {
         const logRes = await pgPool.query(
-          `INSERT INTO migration_log (source_table, status) VALUES ($1, 'running') RETURNING id`,
+          `INSERT INTO system.migration_log (source_table, status) VALUES ($1, 'running') RETURNING id`,
           [tableName]
         );
         logId = logRes.rows[0].id;
@@ -999,7 +1017,7 @@ async function migrateRawTables(mssqlPool, pgPool, opts = {}) {
                 }
               }
               await client.query(
-                'INSERT INTO legacy_raw (source_table, row_data) VALUES ($1, $2)',
+                'INSERT INTO system.legacy_raw (source_table, row_data) VALUES ($1, $2)',
                 [tableName, JSON.stringify(clean)]
               );
               stats.rowsWritten++;
@@ -1096,14 +1114,14 @@ async function reconciliationReport(mssqlPool, pgPool) {
         `SELECT COUNT(*) AS cnt FROM [dbo].[${tableName}]`
       );
       const tgtRes = await pgPool.query(
-        `SELECT COUNT(*) AS cnt FROM legacy_raw WHERE source_table = $1`,
+        `SELECT COUNT(*) AS cnt FROM system.legacy_raw WHERE source_table = $1`,
         [tableName]
       );
       const src = srcRes.recordset[0].cnt;
       const tgt = parseInt(tgtRes.rows[0].cnt);
       rows.push({
         source: tableName,
-        target: 'legacy_raw',
+        target: 'system.legacy_raw',
         strategy: 'raw',
         sourceRows: src,
         targetRows: tgt,
@@ -1113,7 +1131,7 @@ async function reconciliationReport(mssqlPool, pgPool) {
     } catch (err) {
       rows.push({
         source: tableName,
-        target: 'legacy_raw',
+        target: 'system.legacy_raw',
         strategy: 'raw',
         sourceRows: -1,
         targetRows: -1,
@@ -1137,68 +1155,63 @@ async function reconciliationReport(mssqlPool, pgPool) {
  */
 const COMPARE_DEFS = [
   {
-    sourceTable: 'Breeds', targetTable: 'breeds',
-    sourceKey: 'Breed_Code', targetKey: 'id',
-    compareCols: [{ source: 'Breed_Name', target: 'name' }],
-  },
-  {
-    sourceTable: 'Contacts', targetTable: 'contacts',
-    sourceKey: 'Contact_ID', targetKey: 'id',
+    sourceTable: 'Contacts', targetTable: 'contacts.contacts',
+    sourceKey: 'Contact_ID', targetKey: 'contact_id',
     compareCols: [
       { source: 'Company', target: 'company' },
-      { source: 'First_Name', target: 'first_name' },
+      { source: 'First_Name', target: 'firstname' },
       { source: 'Last_Name', target: 'last_name' },
-      { source: 'Tel_No', target: 'phone' },
+      { source: 'Tel_No', target: 'tel_no' },
       { source: 'Email', target: 'email' },
     ],
   },
   {
-    sourceTable: 'Diseases', targetTable: 'diseases',
-    sourceKey: 'Disease_ID', targetKey: 'id',
+    sourceTable: 'Diseases', targetTable: 'health.diseases',
+    sourceKey: 'Disease_ID', targetKey: 'disease_id',
     compareCols: [
-      { source: 'Disease_Name', target: 'name' },
+      { source: 'Disease_Name', target: 'disease_name' },
       { source: 'Symptoms', target: 'symptoms' },
     ],
   },
   {
-    sourceTable: 'Drugs', targetTable: 'drugs',
-    sourceKey: 'Drug_ID', targetKey: 'id',
+    sourceTable: 'Drugs', targetTable: 'health.drugs',
+    sourceKey: 'Drug_ID', targetKey: 'drug_id',
     compareCols: [
-      { source: 'Units', target: 'unit' },
+      { source: 'Units', target: 'units' },
       { source: 'Cost_per_unit', target: 'cost_per_unit' },
     ],
   },
   {
-    sourceTable: 'Cattle', targetTable: 'cows',
-    sourceKey: 'BeastID', targetKey: 'legacy_beast_id',
+    sourceTable: 'Cattle', targetTable: 'cattle.cows',
+    sourceKey: 'BeastID', targetKey: 'beastid',
     compareCols: [
-      { source: 'Ear_Tag', target: 'tag_number' },
+      { source: 'Ear_Tag', target: 'ear_tag' },
       { source: 'EID', target: 'eid' },
-      { source: 'Sex', target: 'sex', transform: (v) => { if (!v) return 'female'; const s = String(v).toUpperCase().trim(); return ['S','B','M'].includes(s) ? 'male' : 'female'; } },
+      { source: 'Sex', target: 'sex' },
     ],
   },
   {
-    sourceTable: 'Purchase_Lots', targetTable: 'purchase_lots',
+    sourceTable: 'Purchase_Lots', targetTable: 'purchasing.purchase_lots',
     sourceKey: 'Lot_Number', targetKey: 'lot_number',
     compareCols: [
-      { source: 'Number_Head', target: 'head_count' },
-      { source: 'Total_Weight', target: 'total_weight_kg' },
+      { source: 'Number_Head', target: 'number_head' },
+      { source: 'Total_Weight', target: 'total_weight' },
     ],
   },
   {
-    sourceTable: 'FeedDB_Pens_File', targetTable: 'pens',
-    sourceKey: 'Pen_name', targetKey: 'name',
+    sourceTable: 'FeedDB_Pens_File', targetTable: 'pen.pens_file',
+    sourceKey: 'Pen_name', targetKey: 'pen_name',
     compareCols: [],
   },
   {
-    sourceTable: 'Cost_Codes', targetTable: 'cost_codes',
-    sourceKey: 'RevExp_Code', targetKey: 'code',
-    compareCols: [{ source: 'RevExp_Desc', target: 'description' }],
+    sourceTable: 'Cost_Codes', targetTable: 'finance.cost_codes',
+    sourceKey: 'RevExp_Code', targetKey: 'revexp_code',
+    compareCols: [{ source: 'RevExp_Desc', target: 'revexp_desc' }],
   },
   {
-    sourceTable: 'Market_Category', targetTable: 'market_categories',
-    sourceKey: 'Market_Cat_ID', targetKey: 'id',
-    compareCols: [{ source: 'Market_Category', target: 'name' }],
+    sourceTable: 'Market_Category', targetTable: 'cattle.market_categories',
+    sourceKey: 'Market_Cat_ID', targetKey: 'market_cat_id',
+    compareCols: [{ source: 'Market_Category', target: 'market_category' }],
   },
 ];
 

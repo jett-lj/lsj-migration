@@ -26,9 +26,13 @@ function getMssqlConfig() {
     );
   }
 
+  // Named instances (host\instance) use SQL Browser for port resolution —
+  // specifying a port alongside a named instance causes connection failures.
+  const isNamedInstance = host.includes('\\');
+
   return {
-    server:   host,
-    port:     parseInt(process.env.MSSQL_PORT || '1433', 10),
+    server:   isNamedInstance ? host.split('\\')[0] : host,
+    ...(isNamedInstance ? {} : { port: parseInt(process.env.MSSQL_PORT || '1433', 10) }),
     user,
     password,
     database,
@@ -37,6 +41,7 @@ function getMssqlConfig() {
       trustServerCertificate: true,
       requestTimeout:     parseInt(process.env.MSSQL_REQUEST_TIMEOUT || '600000', 10),
       connectionTimeout:  parseInt(process.env.MSSQL_CONNECTION_TIMEOUT || '30000', 10),
+      ...(isNamedInstance ? { instanceName: host.split('\\')[1] } : {}),
     },
     pool: {
       max: parseInt(process.env.MSSQL_POOL_MAX || '10'),

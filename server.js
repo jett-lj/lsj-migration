@@ -67,10 +67,17 @@ function pgConfig() {
   };
 }
 
-const FK_BLOCK_REGEX = /ALTER TABLE (\S+) DROP CONSTRAINT IF EXISTS (\S+);\s*\nALTER TABLE \S+ ADD CONSTRAINT \S+\s*\n\s*FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+// Matches v3 FK blocks: ALTER TABLE schema.table ADD CONSTRAINT fk_name\n    FOREIGN KEY (...) REFERENCES ...;
+const FK_BLOCK_REGEX = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+
+const V3_SCHEMAS = [
+  'breeding', 'carcase', 'cattle', 'commodity', 'contacts', 'digistar',
+  'feed', 'finance', 'health', 'pen', 'purchasing', 'reporting',
+  'system', 'transport', 'weighing'
+];
 
 async function ensureSchema(pgPool) {
-  const schemaPath = path.join(__dirname, 'schema-farm.sql');
+  const schemaPath = path.join(__dirname, 'optimized_schema_postgres_v3.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
   // Strip FK constraint blocks — they are restored after data load by restoreForeignKeys()
   const schemaWithoutFks = schema.replace(FK_BLOCK_REGEX, '');
@@ -78,21 +85,22 @@ async function ensureSchema(pgPool) {
 }
 
 async function dropAllForeignKeys(pgPool) {
+  const schemaList = V3_SCHEMAS.map(s => `'${s}'`).join(', ');
   const { rows } = await pgPool.query(`
-    SELECT tc.table_name, tc.constraint_name
+    SELECT tc.table_schema, tc.table_name, tc.constraint_name
     FROM information_schema.table_constraints tc
     WHERE tc.constraint_type = 'FOREIGN KEY'
-      AND tc.table_schema = 'public'
-    ORDER BY tc.table_name
+      AND tc.table_schema IN (${schemaList})
+    ORDER BY tc.table_schema, tc.table_name
   `);
-  for (const { table_name, constraint_name } of rows) {
-    await pgPool.query(`ALTER TABLE "${table_name}" DROP CONSTRAINT IF EXISTS "${constraint_name}"`);
+  for (const { table_schema, table_name, constraint_name } of rows) {
+    await pgPool.query(`ALTER TABLE "${table_schema}"."${table_name}" DROP CONSTRAINT IF EXISTS "${constraint_name}"`);
   }
   console.log(`[INFO] Dropped ${rows.length} FK constraints for clean data load.`);
 }
 
 async function restoreForeignKeys(pgPool) {
-  const schemaPath = path.join(__dirname, 'schema-farm.sql');
+  const schemaPath = path.join(__dirname, 'optimized_schema_postgres_v3.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
 
   // Extract ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY blocks
@@ -103,24 +111,25 @@ async function restoreForeignKeys(pgPool) {
   const failures = [];
   for (const match of fkBlocks) {
     const block = match[0];
-    const notValidBlock = block.replace(
-      /(REFERENCES\s+[^;]+?)(;)\s*$/,
-      '$1 NOT VALID$2'
-    );
+    const constraintName = match[1];
+    // Append NOT VALID before the final semicolon
+    const notValidBlock = block.replace(/;$/, ' NOT VALID;');
     try {
       await pgPool.query(notValidBlock);
       added++;
     } catch (err) {
-      failures.push({ constraint: match[2], error: err.message });
+      failures.push({ constraint: constraintName, error: err.message });
     }
   }
   console.log(`[INFO] FK constraints added (NOT VALID): ${added}/${fkBlocks.length}`);
 
   // Validate each constraint — checks existing data, logs failures
+  const schemaList = V3_SCHEMAS.map(s => `'${s}'`).join(', ');
   const { rows } = await pgPool.query(`
     SELECT conrelid::regclass AS table_name, conname AS constraint_name
-    FROM pg_constraint
-    WHERE contype = 'f' AND NOT convalidated AND connamespace = 'public'::regnamespace
+    FROM pg_constraint c
+    JOIN pg_namespace n ON n.oid = c.connamespace
+    WHERE c.contype = 'f' AND NOT c.convalidated AND n.nspname IN (${schemaList})
   `);
   let validated = 0;
   for (const { table_name, constraint_name } of rows) {
