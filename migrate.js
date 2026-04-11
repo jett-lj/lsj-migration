@@ -65,16 +65,17 @@ function pgConfig() {
 
 // ── Apply schema before migration ───────────────────
 
-// Matches v3 FK blocks: ALTER TABLE schema.table ADD CONSTRAINT fk_name\n    FOREIGN KEY (...) REFERENCES ...;
-const FK_BLOCK_REGEX = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+// Matches v5 DO $$ FK blocks (containing _fk DECLARE) and any standalone FK ALTERs
+const FK_DO_BLOCK = /DO \$\$\s*DECLARE\s+_fk\b[\s\S]*?\$\$;/g;
+const FK_INLINE   = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
 
 async function ensureSchema(pgPool) {
-  const schemaPath = path.join(__dirname, 'schema-farm-v4.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
   // Strip FK constraint blocks — they are restored after data load by restoreForeignKeys()
-  const schemaWithoutFks = schema.replace(FK_BLOCK_REGEX, '');
+  const schemaWithoutFks = schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, '');
   await pgPool.query(schemaWithoutFks);
-  console.log('[INFO] PostgreSQL v4 schema applied (FKs deferred).');
+  console.log('[INFO] PostgreSQL v5 schema applied (FKs deferred).');
 }
 
 // ── FK constraint helpers (drop before load, restore after) ──
@@ -101,28 +102,39 @@ async function dropAllForeignKeys(pgPool) {
 }
 
 async function restoreForeignKeys(pgPool) {
-  const schemaPath = path.join(__dirname, 'schema-farm-v4.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
 
-  // Extract ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY blocks
-  const fkBlocks = [...schema.matchAll(FK_BLOCK_REGEX)];
+  // Extract ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY blocks (inline + from DO blocks)
+  // First extract from DO $$ blocks
+  const doBlocks = [...schema.matchAll(FK_DO_BLOCK)];
+  const fkStatements = [];
+  for (const doBlock of doBlocks) {
+    // Extract ARRAY['name', 'ALTER TABLE ...'] entries
+    const arrayRe = /ARRAY\['([^']+)',\s*'(ALTER TABLE[^']+)'/g;
+    let m;
+    while ((m = arrayRe.exec(doBlock[0])) !== null) {
+      fkStatements.push({ constraintName: m[1], sql: m[2] });
+    }
+  }
+  // Also extract standalone FK ALTERs
+  const inlineMatches = [...schema.matchAll(FK_INLINE)];
+  for (const match of inlineMatches) {
+    fkStatements.push({ constraintName: match[1], sql: match[0].replace(/;$/, '') });
+  }
 
   // Add each FK constraint with NOT VALID (skips existing-data check)
   let added = 0;
   const failures = [];
-  for (const match of fkBlocks) {
-    const block = match[0];
-    const constraintName = match[1];
-    // Append NOT VALID before the final semicolon
-    const notValidBlock = block.replace(/;$/, ' NOT VALID;');
+  for (const { constraintName, sql } of fkStatements) {
     try {
-      await pgPool.query(notValidBlock);
+      await pgPool.query(sql + ' NOT VALID');
       added++;
     } catch (err) {
       failures.push({ constraint: constraintName, error: err.message });
     }
   }
-  console.log(`[INFO] FK constraints added (NOT VALID): ${added}/${fkBlocks.length}`);
+  console.log(`[INFO] FK constraints added (NOT VALID): ${added}/${fkStatements.length}`);
 
   // Now validate each constraint — this checks existing data and logs failures
   const schemaList = V3_SCHEMAS.map(s => `'${s}'`).join(', ');

@@ -78,10 +78,10 @@ function toTime(v) {
 
 /** Map legacy sex values ('S','H','B','C','M','F' etc.) to 'male'/'female' */
 function mapSex(v) {
-  if (!v) return 'F';
+  if (!v) return 'female';
   const s = String(v).toUpperCase().trim();
-  if (['S', 'B', 'M'].includes(s)) return 'M';   // Steer / Bull / Male
-  return 'F';
+  if (['S', 'B', 'M'].includes(s)) return 'male';   // Steer / Bull / Male
+  return 'female';
 }
 
 /** Derive cow status from legacy flags */

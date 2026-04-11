@@ -39,7 +39,7 @@ const { TABLE_CATEGORIES, getTableCategory, getCategorySummary } = require('../c
 // Ã¢â€â‚¬Ã¢â€â‚¬ Test DB setup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 const TEST_DB = 'lsj_migration_test';
-const V3_SCHEMA = path.join(__dirname, '..', 'schema-farm-v4.sql');
+const V3_SCHEMA = path.join(__dirname, '..', 'schema-farm-v5.sql');
 
 function adminPool() {
   return new Pool({
@@ -75,9 +75,11 @@ beforeAll(async () => {
   }
   pgPool = testPool();
   const schema = fs.readFileSync(V3_SCHEMA, 'utf8');
-  // Strip FK constraints (same as migrate.js ensureSchema) so integration tests can insert without prereqs
-  const FK_BLOCK_REGEX = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
-  await pgPool.query(schema.replace(FK_BLOCK_REGEX, ''));
+  // Strip FK constraints so integration tests can insert without prereqs
+  // v5 wraps FKs in DO $$ blocks with _fks TEXT[][] — strip those, plus any standalone ALTER TABLE FK lines
+  const FK_DO_BLOCK = /DO \$\$\s*DECLARE\s+_fk\b[\s\S]*?\$\$;/g;
+  const FK_INLINE    = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+  await pgPool.query(schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, ''));
 });
 
 afterAll(async () => {
@@ -222,19 +224,19 @@ describe('Transform helpers', () => {
   });
 
   describe('mapSex', () => {
-    it('maps steer/bull/male codes to M', () => {
-      expect(mapSex('S')).toBe('M');
-      expect(mapSex('B')).toBe('M');
-      expect(mapSex('M')).toBe('M');
-      expect(mapSex('s')).toBe('M');
+    it('maps steer/bull/male codes to male', () => {
+      expect(mapSex('S')).toBe('male');
+      expect(mapSex('B')).toBe('male');
+      expect(mapSex('M')).toBe('male');
+      expect(mapSex('s')).toBe('male');
     });
 
-    it('maps other values to F', () => {
-      expect(mapSex('H')).toBe('F');
-      expect(mapSex('C')).toBe('F');
-      expect(mapSex('F')).toBe('F');
-      expect(mapSex(null)).toBe('F');
-      expect(mapSex('')).toBe('F');
+    it('maps other values to female', () => {
+      expect(mapSex('H')).toBe('female');
+      expect(mapSex('C')).toBe('female');
+      expect(mapSex('F')).toBe('female');
+      expect(mapSex(null)).toBe('female');
+      expect(mapSex('')).toBe('female');
     });
   });
 
@@ -605,7 +607,7 @@ describe('Migration runner Ã¢â‚¬â€ integration', () => {
       expect(cows.rows).toHaveLength(1);
       expect(cows.rows[0].ear_tag).toBe('A001');
       expect(cows.rows[0].eid).toBe('EID001');
-      expect(cows.rows[0].sex).toBe('M');
+      expect(cows.rows[0].sex).toBe('male');
       expect(cows.rows[0].died).toBe(false);
       expect(cows.rows[0].legacy_beast_id).toBe(100);
 
@@ -664,7 +666,7 @@ describe('Migration runner Ã¢â‚¬â€ integration', () => {
 
       const res = await pgPool.query("SELECT * FROM cattle.cows WHERE ear_tag = 'D001'");
       expect(res.rows[0].died).toBe(true);
-      expect(res.rows[0].sex).toBe('F');
+      expect(res.rows[0].sex).toBe('female');
     });
 
     it('handles sold cattle status correctly', async () => {
@@ -948,7 +950,7 @@ describe('Migration runner Ã¢â‚¬â€ integration', () => {
         // Seed a minimal cow so the test can run standalone
         await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Test') ON CONFLICT DO NOTHING");
         await pgPool.query(`
-          INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('NULL_AMT', 1, 88001, false, 'F')
+          INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('NULL_AMT', 1, 88001, false, 'female')
         `);
       }
       const cow = (await pgPool.query('SELECT id, legacy_beast_id FROM cattle.cows WHERE legacy_beast_id = 88001')).rows[0]
@@ -1171,7 +1173,7 @@ describe('Post-migration validation', () => {
     // Seed some valid data
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Angus')");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('T001', 1, 500, false, 'F')
+      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('T001', 1, 500, false, 'female')
     `);
     const cowRes = await pgPool.query("SELECT id FROM cattle.cows WHERE ear_tag = 'T001'");
     const cowId = cowRes.rows[0].id;
@@ -1238,7 +1240,7 @@ describe('Post-migration validation', () => {
   it('detects negative weights', async () => {
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 99, 'Test') ON CONFLICT DO NOTHING");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('NEG001', 1, 999, false, 'F')
+      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('NEG001', 1, 999, false, 'female')
     `);
     const cowRes = await pgPool.query("SELECT id FROM cattle.cows WHERE ear_tag = 'NEG001'");
     const cowId = cowRes.rows[0].id;
@@ -1569,7 +1571,7 @@ describe('New table mappings', () => {
     // Set up cow first
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Angus')");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('C001', 1, 400, false, 'M')
+      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('C001', 1, 400, false, 'male')
     `);
     const cowId = (await pgPool.query("SELECT id FROM cattle.cows WHERE ear_tag = 'C001'")).rows[0].id;
     const beastIdMap = { 400: cowId };
@@ -1613,7 +1615,7 @@ describe('New table mappings', () => {
   it('migrates autopsy records with findings JSONB', async () => {
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Angus') ON CONFLICT DO NOTHING");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('AP01', 1, 500, true, 'M')
+      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('AP01', 1, 500, true, 'male')
     `);
     const cowId = (await pgPool.query("SELECT id FROM cattle.cows WHERE ear_tag = 'AP01'")).rows[0].id;
     const beastIdMap = { 500: cowId };
