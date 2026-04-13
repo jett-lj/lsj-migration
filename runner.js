@@ -80,12 +80,12 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
     const allTargets = [...new Set(toRun.map(m => m.targetTable))];
     allTargets.push('system.legacy_raw', 'system.migration_log');
     log.info(`Truncating ${allTargets.length} target tables for clean migration...`);
-    await pgPool.query(`TRUNCATE ${allTargets.join(', ')} CASCADE`);
+    await pgPool.query(`TRUNCATE ${allTargets.join(', ')} RESTART IDENTITY CASCADE`);
   } else if (!dryRun && tables) {
     const targets = toRun.map(m => m.targetTable);
     log.info(`Truncating selected tables: ${targets.join(', ')}`);
     for (const t of targets) {
-      await pgPool.query(`TRUNCATE ${t} CASCADE`);
+      await pgPool.query(`TRUNCATE ${t} RESTART IDENTITY CASCADE`);
     }
   }
 
@@ -145,6 +145,18 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
       } else {
         lookups.drugIdSet = await buildIdSet(pgPool, 'health.drugs', 'drug_id');
       }
+    }
+    if (tables.has('system.lookups')) {
+      if (dryRun) {
+        lookups.breedMap = await buildLookupFromSource(mssqlPool, 'Breeds', 'Breed_Code', 'Breed_Name');
+      } else {
+        const res = await pgPool.query("SELECT code, name FROM system.lookups WHERE category = 'breed'");
+        lookups.breedMap = {};
+        for (const row of res.rows) {
+          lookups.breedMap[row.code] = row.name;
+        }
+      }
+      log.info(`  Built breedMap: ${Object.keys(lookups.breedMap).length} entries`);
     }
   }
 
@@ -333,7 +345,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
 
       // Apply row-level transform if present
       if (transformRow) {
-        transformRow(rawRow, lookups);
+        transformRow(rawRow, row, lookups);
         // Merge derived fields
         Object.keys(rawRow).forEach(k => {
           if (k.startsWith('_')) row[k] = rawRow[k];

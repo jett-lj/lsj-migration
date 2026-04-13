@@ -141,6 +141,17 @@ const mappings = [
 
   {
     order: 10,
+    sourceTable: 'Breeds',
+    targetTable: 'cattle.breeds',
+    query: 'SELECT Breed_Name FROM dbo.Breeds WHERE Breed_Name IS NOT NULL ORDER BY Breed_Code',
+    columns: [
+      { source: 'Breed_Name', target: 'name', transform: trimOrNull },
+    ],
+    validate: (row) => row.name !== null,
+  },
+
+  {
+    order: 10,
     sourceTable: 'FeedDB_Pens_File',
     targetTable: 'feed.feeddb_pens_file',
     query: 'SELECT Pen_name, IsPaddock, Include_in_Pen_List, Current_exit_pen FROM dbo.FeedDB_Pens_File ORDER BY Pen_name',
@@ -510,6 +521,11 @@ const mappings = [
       { source: 'Marbling_bonus_lot',  target: 'marbling_bonus_lot',      transform: trimOrNull },
       { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
+    transformRow(rawRow, row, lookups) {
+      const breedCode = rawRow.Breed;
+      const map = lookups.breedMap || {};
+      row.breed = map[breedCode] || map[String(breedCode)] || null;
+    },
   },
 
   // ---- Order 40: Dependent event tables ----
@@ -1102,6 +1118,20 @@ const mappings = [
       { source: 'Location_Type', target: 'name', transform: trimOrNull },
     ],
     staticColumns: { category: 'location_type' },
+  },
+
+  {
+    order: 10,
+    sourceTable: 'LocationTypes',
+    targetTable: 'cattle.location_types',
+    query: `SELECT Location_Type
+            FROM dbo.LocationTypes
+            WHERE Location_Type IS NOT NULL
+            ORDER BY Loc_Type_code`,
+    columns: [
+      { source: 'Location_Type', target: 'name', transform: trimOrNull },
+    ],
+    validate: (row) => row.name !== null,
   },
 
   {
@@ -1915,7 +1945,8 @@ const mappings = [
     order: 40,
     sourceTable: 'Beast_Breeding',
     targetTable: 'breeding.beast_breeding',
-    query: `SELECT Beast_ID, Birth_Date, Birth_Wght, Sire, Dam, Genetics, Notes
+    query: `SELECT Beast_ID, Birth_Date, Birth_Wght, Sire, Dam, Genetics, Notes,
+                   Breed, Sub_Breed, Breed_Pcnt, Sire_Line
             FROM dbo.Beast_Breeding
             ORDER BY Beast_ID`,
     columns: [
@@ -1926,7 +1957,15 @@ const mappings = [
       { source: 'Dam', target: 'dam', transform: toNum },
       { source: 'Genetics', target: 'genetics', transform: toNum },
       { source: 'Notes', target: 'notes', transform: trimOrNull },
+      { source: 'Sub_Breed', target: 'sub_breed', transform: trimOrNull },
+      { source: 'Breed_Pcnt', target: 'breed_pcnt', transform: toNum },
+      { source: 'Sire_Line', target: 'sire_line', transform: trimOrNull },
     ],
+    transformRow(rawRow, row, lookups) {
+      const breedCode = rawRow.Breed;
+      const map = lookups.breedMap || {};
+      row.breed = map[breedCode] || map[String(breedCode)] || null;
+    },
   },
 
   {
@@ -1979,21 +2018,29 @@ const mappings = [
     order: 40,
     sourceTable: 'Breeding_Dams',
     targetTable: 'breeding.breeding_dams',
-    query: `SELECT Dam_ID, Dam_Name, Dam_Supplier
+    query: `SELECT Dam_ID, Dam_Name, Dam_Supplier, Breed, EID, Notes
             FROM dbo.Breeding_Dams
             ORDER BY Dam_ID`,
     columns: [
       { source: 'Dam_ID', target: 'dam_id', transform: toNum },
       { source: 'Dam_Name', target: 'dam_name', transform: trimOrNull },
       { source: 'Dam_Supplier', target: 'dam_supplier', transform: trimOrNull },
+      { source: 'EID', target: 'eid', transform: trimOrNull },
+      { source: 'Notes', target: 'notes', transform: trimOrNull },
     ],
+    transformRow(rawRow, row, lookups) {
+      const breedCode = rawRow.Breed;
+      const map = lookups.breedMap || {};
+      row.breed = map[breedCode] || map[String(breedCode)] || null;
+    },
   },
 
   {
     order: 40,
     sourceTable: 'Breeding_Sires',
     targetTable: 'breeding.breeding_sires',
-    query: `SELECT Sire_ID, Sire_Name, Sire_Supplier, Sire_Line_ID, AWA_Sire_ID
+    query: `SELECT Sire_ID, Sire_Name, Sire_Supplier, Sire_Line_ID, AWA_Sire_ID,
+                   Breed, Sire_Line, EID, Notes
             FROM dbo.Breeding_Sires
             ORDER BY Sire_ID`,
     columns: [
@@ -2002,7 +2049,15 @@ const mappings = [
       { source: 'Sire_Supplier', target: 'sire_supplier', transform: trimOrNull },
       { source: 'Sire_Line_ID', target: 'sire_line_id', transform: toNum },
       { source: 'AWA_Sire_ID', target: 'awa_sire_id', transform: trimOrNull },
+      { source: 'Sire_Line', target: 'sire_line', transform: trimOrNull },
+      { source: 'EID', target: 'eid', transform: trimOrNull },
+      { source: 'Notes', target: 'notes', transform: trimOrNull },
     ],
+    transformRow(rawRow, row, lookups) {
+      const breedCode = rawRow.Breed;
+      const map = lookups.breedMap || {};
+      row.breed = map[breedCode] || map[String(breedCode)] || null;
+    },
   },
 
   {

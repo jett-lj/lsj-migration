@@ -868,6 +868,9 @@ const MANIFEST = {
     'Dam',
     'Genetics',
     'Notes',
+    'Sub_Breed',
+    'Breed_Pcnt',
+    'Sire_Line',
   ],
   Beast_Ohead_Appl_History: [
     'Ohead_Appl_Month_End_Date',
@@ -894,13 +897,16 @@ const MANIFEST = {
     'Ohead_Head_Oth',
   ],
   BeastMovement: ['BeastID', 'MoveDate'],
-  Breeding_Dams: ['Dam_ID', 'Dam_Name', 'Dam_Supplier'],
+  Breeding_Dams: ['Dam_ID', 'Dam_Name', 'Dam_Supplier', 'EID', 'Notes'],
   Breeding_Sires: [
     'Sire_ID',
     'Sire_Name',
     'Sire_Supplier',
     'Sire_Line_ID',
     'AWA_Sire_ID',
+    'Sire_Line',
+    'EID',
+    'Notes',
   ],
   Cattle_DOF_and_DIP: ['BeastID', 'DOF', 'DIP', 'Date_Calculated'],
   Cattle_Feed_Update: [
@@ -1529,7 +1535,7 @@ describe('Layer 1 â€” Static manifest audit', () => {
 
   it('all 19 tables are covered', () => {
     expect(Object.keys(MANIFEST)).toHaveLength(123);
-    expect(mappings).toHaveLength(195);
+    expect(mappings).toHaveLength(197);
   });
 });
 

@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS cattle.cows (
   vendor_ear_tag         TEXT,
   group_name             TEXT,
   sub_group              TEXT,
-  breed                  TEXT NOT NULL,
+  breed                  TEXT,
   sex                    TEXT DEFAULT 'female' CHECK (sex IN ('female', 'male')),
   hgp                    BOOLEAN DEFAULT FALSE,
   -- Financials
@@ -4797,9 +4797,13 @@ DECLARE
         ARRAY['fk_purch_lots_agent',      'ALTER TABLE purchasing.purchase_lots ADD CONSTRAINT fk_purch_lots_agent FOREIGN KEY (agent_code) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
         -- commodity → contacts
         ARRAY['fk_commodcontracts_supplier','ALTER TABLE commodity.commodcontracts ADD CONSTRAINT fk_commodcontracts_supplier FOREIGN KEY (supplier_ac_no) REFERENCES contacts.contacts(id) ON DELETE RESTRICT'],
-        -- breeding → cattle
+        -- breeding → cattle, cattle.breeds
         ARRAY['fk_beast_breeding_cow',    'ALTER TABLE breeding.beast_breeding ADD CONSTRAINT fk_beast_breeding_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_beast_breeding_cattle', 'ALTER TABLE breeding.beast_breeding ADD CONSTRAINT fk_beast_breeding_cattle FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
+        ARRAY['fk_beast_breeding_breed',  'ALTER TABLE breeding.beast_breeding ADD CONSTRAINT fk_beast_breeding_breed FOREIGN KEY (breed) REFERENCES cattle.breeds(name) ON DELETE SET NULL'],
+        ARRAY['fk_sire_breed',            'ALTER TABLE breeding.breeding_sires ADD CONSTRAINT fk_sire_breed FOREIGN KEY (breed) REFERENCES cattle.breeds(name) ON DELETE SET NULL'],
+        ARRAY['fk_dam_breed',             'ALTER TABLE breeding.breeding_dams ADD CONSTRAINT fk_dam_breed FOREIGN KEY (breed) REFERENCES cattle.breeds(name) ON DELETE SET NULL'],
+        ARRAY['fk_cow_breed',             'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cow_breed FOREIGN KEY (breed) REFERENCES cattle.breeds(name) ON DELETE SET NULL'],
         -- weighing → cattle
         ARRAY['fk_weighing_cow',          'ALTER TABLE weighing.weighing_events ADD CONSTRAINT fk_weighing_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_weighing_cattle',       'ALTER TABLE weighing.weighing_events ADD CONSTRAINT fk_weighing_cattle FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],

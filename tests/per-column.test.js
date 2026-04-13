@@ -269,7 +269,7 @@ describe('Transform functions — exhaustive', () => {
 
 describe('Mapping structural integrity', () => {
   it('all 195 mappings are loaded', () => {
-    expect(mappings.length).toBe(195);
+    expect(mappings.length).toBe(197);
   });
 
   mappings.forEach((m, idx) => {

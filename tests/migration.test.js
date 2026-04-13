@@ -765,11 +765,15 @@ describe('Migration runner Ã¢â‚¬â€ integration', () => {
         tables: ['Breeds'],
       });
 
-      expect(results).toHaveLength(1);
+      expect(results).toHaveLength(2);
       expect(results[0].table).toBe('Breeds');
+      expect(results[1].table).toBe('Breeds');
 
       const breeds = await pgPool.query("SELECT COUNT(*) AS cnt FROM system.lookups WHERE category = 'breed'");
       expect(parseInt(breeds.rows[0].cnt)).toBe(1);
+
+      const breedRows = await pgPool.query('SELECT COUNT(*) AS cnt FROM cattle.breeds');
+      expect(parseInt(breedRows.rows[0].cnt)).toBe(1);
 
       const diseases = await pgPool.query('SELECT COUNT(*) AS cnt FROM health.diseases');
       expect(parseInt(diseases.rows[0].cnt)).toBe(0);
