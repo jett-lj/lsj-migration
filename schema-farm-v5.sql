@@ -2262,7 +2262,8 @@ CREATE TABLE IF NOT EXISTS commodity.commodities (
 
 -- commodcontracts (V2: 17 clients — supplier contracts)
 CREATE TABLE IF NOT EXISTS commodity.commodcontracts (
-  contract_no       SERIAL PRIMARY KEY,
+  id                SERIAL PRIMARY KEY,
+  contract_no       VARCHAR(10),
   supplier_ac_no    INTEGER,
   commod_code       SMALLINT REFERENCES commodity.commodities(commodity_code),
   contract_date     DATE,
@@ -2282,7 +2283,7 @@ CREATE TABLE IF NOT EXISTS commodity.commodcontracts (
 CREATE TABLE IF NOT EXISTS commodity.commodtrans (
   id               SERIAL NOT NULL,
   commodity_code   SMALLINT,
-  contract_no      INTEGER,
+  contract_no      TEXT,
   trans_date       DATE NOT NULL,
   trans_type       TEXT,
   quantity         NUMERIC(12,4),
@@ -2437,7 +2438,8 @@ CREATE INDEX IF NOT EXISTS idx_dockets_date ON transport.deliverydockets(docket_
 -- manure_locations (V2: 6 clients)
 CREATE TABLE IF NOT EXISTS transport.manure_locations (
   id            SERIAL PRIMARY KEY,
-  location_name TEXT NOT NULL,
+  location_name TEXT,
+  direction     VARCHAR(4),
   notes         TEXT,
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   updated_at    TIMESTAMPTZ
@@ -4708,7 +4710,6 @@ ALTER TABLE feed.ration_regimes ALTER COLUMN date_started DROP NOT NULL;
 ALTER TABLE pen.pen_cleaning_dates ALTER COLUMN clean_date DROP NOT NULL;
 ALTER TABLE transport.location_transactions ALTER COLUMN movement_date DROP NOT NULL;
 ALTER TABLE transport.manure_carting ALTER COLUMN cart_date DROP NOT NULL;
-ALTER TABLE transport.manure_locations ALTER COLUMN location_name DROP NOT NULL;
 ALTER TABLE operations.archiving_log ALTER COLUMN archive_date DROP NOT NULL;
 ALTER TABLE reporting.month_end_stockonhand ALTER COLUMN period_date DROP NOT NULL;
 ALTER TABLE reporting.monthly_adjustment_ob ALTER COLUMN adj_date DROP NOT NULL;

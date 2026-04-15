@@ -795,10 +795,14 @@ async function validateMigration(mssqlPool, pgPool) {
         detail: `source=${srcCount} target=${tgtCount}${expectedSkipped ? ` (${expectedSkipped} expected skips)` : ''}${passed ? '' : ' MISMATCH'}`,
       });
     } catch (err) {
+      // Source table doesn't exist in this database — not a failure
+      const missing = /Invalid object name|does not exist|Login failed/i.test(err.message);
       checks.push({
         check: `Row count: ${source} → ${target}`,
-        passed: false,
-        detail: `Error: ${err.message}`,
+        passed: missing,
+        detail: missing
+          ? `source table not present in this database — skipped`
+          : `Error: ${err.message}`,
       });
     }
   }

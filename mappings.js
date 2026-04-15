@@ -110,6 +110,9 @@ function mapCostType(v) {
   return String(v).toUpperCase() === 'R' ? 'revenue' : 'expense';
 }
 
+/** Junk breed names that should be excluded from migration */
+const JUNK_BREEDS = new Set(['Breed Name']);
+
 /** Map legacy contact type to new enum */
 function mapContactType(v) {
   if (!v) return 'other';
@@ -136,7 +139,7 @@ const mappings = [
       { source: 'Breed_Name', target: 'name', transform: trimOrNull },
     ],
     staticColumns: { category: 'breed' },
-    validate: (row) => row.name !== null,
+    validate: (row) => row.name !== null && !JUNK_BREEDS.has(row.name),
   },
 
   {
@@ -147,7 +150,7 @@ const mappings = [
     columns: [
       { source: 'Breed_Name', target: 'name', transform: trimOrNull },
     ],
-    validate: (row) => row.name !== null,
+    validate: (row) => row.name !== null && !JUNK_BREEDS.has(row.name),
   },
 
   {
@@ -524,7 +527,8 @@ const mappings = [
     transformRow(rawRow, row, lookups) {
       const breedCode = rawRow.Breed;
       const map = lookups.breedMap || {};
-      row.breed = map[breedCode] || map[String(breedCode)] || null;
+      const name = map[breedCode] || map[String(breedCode)] || null;
+      row.breed = name && !JUNK_BREEDS.has(name) ? name : null;
     },
   },
 
@@ -1964,7 +1968,8 @@ const mappings = [
     transformRow(rawRow, row, lookups) {
       const breedCode = rawRow.Breed;
       const map = lookups.breedMap || {};
-      row.breed = map[breedCode] || map[String(breedCode)] || null;
+      const name = map[breedCode] || map[String(breedCode)] || null;
+      row.breed = name && !JUNK_BREEDS.has(name) ? name : null;
     },
   },
 
@@ -2031,7 +2036,8 @@ const mappings = [
     transformRow(rawRow, row, lookups) {
       const breedCode = rawRow.Breed;
       const map = lookups.breedMap || {};
-      row.breed = map[breedCode] || map[String(breedCode)] || null;
+      const name = map[breedCode] || map[String(breedCode)] || null;
+      row.breed = name && !JUNK_BREEDS.has(name) ? name : null;
     },
   },
 
@@ -2056,7 +2062,8 @@ const mappings = [
     transformRow(rawRow, row, lookups) {
       const breedCode = rawRow.Breed;
       const map = lookups.breedMap || {};
-      row.breed = map[breedCode] || map[String(breedCode)] || null;
+      const name = map[breedCode] || map[String(breedCode)] || null;
+      row.breed = name && !JUNK_BREEDS.has(name) ? name : null;
     },
   },
 
