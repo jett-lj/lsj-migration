@@ -76,12 +76,15 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
   log.info(`Migration starting — ${toRun.length} tables, batch size ${batchSize}, dryRun=${dryRun}`);
 
   // Truncate target tables to ensure clean migration (avoids duplicates on re-run)
-  if (!dryRun && !tables) {
+  // SKIP_TRUNCATE is set by migrate-all.js --target-db for 2nd+ source DBs
+  // so they don't wipe data loaded by prior sources.
+  const skipTruncate = process.env.SKIP_TRUNCATE === '1';
+  if (!dryRun && !tables && !skipTruncate) {
     const allTargets = [...new Set(toRun.map(m => m.targetTable))];
     allTargets.push('system.legacy_raw', 'system.migration_log');
     log.info(`Truncating ${allTargets.length} target tables for clean migration...`);
     await pgPool.query(`TRUNCATE ${allTargets.join(', ')} RESTART IDENTITY CASCADE`);
-  } else if (!dryRun && tables) {
+  } else if (!dryRun && tables && !skipTruncate) {
     const targets = toRun.map(m => m.targetTable);
     log.info(`Truncating selected tables: ${targets.join(', ')}`);
     for (const t of targets) {
@@ -391,7 +394,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
 
       // Resolve legacy beastid → new PG cattle.cows.id
       let _beastOrphan = false;
-      if (lookups.beastIdMap) {
+      if (lookups.beastIdMap && !mapping.skipBeastLookup) {
         for (const fkCol of ['beastid', 'beast_id']) {
           if (row[fkCol] !== undefined && row[fkCol] !== null) {
             const newId = lookups.beastIdMap[row[fkCol]];
@@ -449,10 +452,13 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         await oc.query('COMMIT');
       } catch (e) {
         await oc.query('ROLLBACK');
+        log.warn(`  Failed to write ${orphanedRows.length} orphaned rows to system.legacy_raw for ${mapping.sourceTable}: ${e.message}`);
       } finally {
         oc.release();
       }
-    } catch (_) {}
+    } catch (outerErr) {
+      log.warn(`  Could not connect to write orphaned rows for ${mapping.sourceTable}: ${outerErr.message}`);
+    }
   }
 
   if (transformed.length === 0 || dryRun) {
@@ -520,9 +526,13 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
           } catch (rowErr) {
             await client.query('ROLLBACK TO SAVEPOINT sp');
             errored++;
-            if (errored <= 10) log.warn(`  Row insert error (${targetTable}): ${rowErr.message}`);
-            else if (errored === 11) log.warn(`  (suppressing further row errors for ${targetTable} — will show total at end)`);
-          }
+            if (errored <= 50) {
+              // Log the error plus the PK / identifying columns so we can trace the bad row
+              const idSnippet = keys.slice(0, 3).map(k => `${k}=${JSON.stringify(row[k])}`).join(', ');
+              log.warn(`  Row insert error (${targetTable}) [${idSnippet}]: ${rowErr.message}`);
+            } else if (errored === 51) {
+              log.warn(`  (suppressing further row errors for ${targetTable} — will show total at end)`);
+            }          }
         }
       }
     }

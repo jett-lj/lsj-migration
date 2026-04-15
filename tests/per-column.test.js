@@ -753,6 +753,7 @@ describe('Per-table column integration', () => {
     expect(c.paddock_tag).toBe('PT55');
     expect(c.outgoing_nvd).toBe('NVD001');
     expect(c.agisted_animal).toBe(false);
+    expect(c.customfeedownerid).toBeNull();
     expect(c.bovilus_shots).toBe(2);
     expect(c.program_id).toBe(1);
     expect(c.abattoir_culled).toBe(false);
@@ -836,6 +837,7 @@ describe('Per-table column integration', () => {
     expect(r.too_far_gone).toBe(false);
     expect(r.dof_when_sick).toBe(30);
     expect(r.user_initials).toBe('DS');
+    expect(r.customfeedownerid).toBeNull();
     expect(r.autopsied).toBe(false);
     expect(r.last_modified_timestamp).not.toBeNull();
   });

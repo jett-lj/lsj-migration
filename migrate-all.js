@@ -27,12 +27,13 @@ const { getMssqlConfig } = require('./config');
 // ── CLI args ────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { dryRun: false, filter: null, listOnly: false, extraArgs: [] };
+  const args = { dryRun: false, filter: null, listOnly: false, targetDb: null, extraArgs: [] };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run')   args.dryRun = true;
     else if (a === '--list') args.listOnly = true;
     else if (a === '--filter' && argv[i + 1]) args.filter = argv[++i];
+    else if (a === '--target-db' && argv[i + 1]) args.targetDb = argv[++i];
     else args.extraArgs.push(a);          // pass through to migrate.js
   }
   return args;
@@ -94,7 +95,7 @@ async function ensurePgDatabase(dbName) {
 
 // ── Run migration as child process ──────────────────
 
-function runMigration(mssqlDb, pgDb, extraArgs) {
+function runMigration(mssqlDb, pgDb, extraArgs, envOverrides = {}) {
   return new Promise((resolve, reject) => {
     const args = [...extraArgs, '--'];
     const env = {
@@ -103,6 +104,7 @@ function runMigration(mssqlDb, pgDb, extraArgs) {
       DB_NAME:        pgDb,
       // Clear any connection string so individual vars take priority
       PG_CONNECTION_STRING: '',
+      ...envOverrides,
     };
     const child = fork(path.join(__dirname, 'migrate.js'), args, {
       env,
@@ -126,7 +128,11 @@ async function main() {
   const dbs = await discoverDatabases(args.filter);
   console.log(`Discovered ${dbs.length} database(s):\n`);
   for (const db of dbs) {
-    console.log(`  ${db}  →  PG: ${pgDbName(db)}`);
+    const target = args.targetDb || pgDbName(db);
+    console.log(`  ${db}  →  PG: ${target}`);
+  }
+  if (args.targetDb) {
+    console.log(`\n  [--target-db] All sources consolidate into: ${args.targetDb}`);
   }
 
   if (args.listOnly) {
@@ -144,19 +150,36 @@ async function main() {
   const passthrough = [...args.extraArgs];
   if (args.dryRun) passthrough.push('--dry-run');
 
+  // When --target-db is set, all source DBs consolidate into one PG database
+  if (args.targetDb && !args.dryRun) {
+    await ensurePgDatabase(args.targetDb);
+  }
+
   for (let i = 0; i < dbs.length; i++) {
     const mssqlDb = dbs[i];
-    const pgDb    = pgDbName(mssqlDb);
+    const pgDb    = args.targetDb || pgDbName(mssqlDb);
 
     console.log(`\n${'═'.repeat(60)}`);
     console.log(`  [${i + 1}/${dbs.length}] ${mssqlDb} → ${pgDb}`);
     console.log(`${'═'.repeat(60)}\n`);
 
     try {
-      if (!args.dryRun) {
+      if (!args.dryRun && !args.targetDb) {
         await ensurePgDatabase(pgDb);
       }
-      await runMigration(mssqlDb, pgDb, passthrough);
+
+      // In --target-db mode: first DB truncates normally; subsequent DBs
+      // must NOT truncate (would wipe data from prior sources) and should
+      // skip FK restore (next source would need to drop them again anyway).
+      const envOverrides = {};
+      if (args.targetDb && i > 0) {
+        envOverrides.SKIP_TRUNCATE = '1';
+      }
+      if (args.targetDb && i < dbs.length - 1) {
+        envOverrides.SKIP_FK_RESTORE = '1';
+      }
+
+      await runMigration(mssqlDb, pgDb, passthrough, envOverrides);
       results.push({ db: mssqlDb, status: 'OK' });
       console.log(`\n  ✓ ${mssqlDb} completed successfully.`);
     } catch (err) {

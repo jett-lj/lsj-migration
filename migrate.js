@@ -76,6 +76,85 @@ async function ensureSchema(pgPool) {
   const schemaWithoutFks = schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, '');
   await pgPool.query(schemaWithoutFks);
   console.log('[INFO] PostgreSQL v5 schema applied (FKs deferred).');
+
+  // Fix stale column types from older schema versions (v3/v4 created some TEXT cols as INT)
+  await fixColumnTypes(pgPool);
+}
+
+/**
+ * Detect columns whose live type doesn't match the v5 schema definition and fix them.
+ * Old (v3/v4) schema created many TEXT/VARCHAR columns as INTEGER. CREATE TABLE IF NOT EXISTS
+ * doesn't modify existing columns, so we fix them with ALTER COLUMN TYPE.
+ */
+async function fixColumnTypes(pgPool) {
+  // Parse expected TEXT/VARCHAR columns from CREATE TABLE blocks in schema
+  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
+  const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+
+  // Extract columns defined as TEXT or VARCHAR in CREATE TABLE statements
+  const expectedText = new Map(); // "schema.table.column" → "TEXT" | "VARCHAR(n)"
+  const createRe = /CREATE TABLE IF NOT EXISTS (\S+)\s*\(([\s\S]*?)\)\s*(?:PARTITION|;)/g;
+  let cm;
+  while ((cm = createRe.exec(schemaSql)) !== null) {
+    const tableFull = cm[1];
+    const body = cm[2];
+    const colRe = /^\s+(\w+)\s+(TEXT|VARCHAR\(\d+\))/gmi;
+    let cc;
+    while ((cc = colRe.exec(body)) !== null) {
+      expectedText.set(`${tableFull}.${cc[1]}`.toLowerCase(), cc[2]);
+    }
+  }
+
+  // Also parse ALTER TABLE ADD COLUMN IF NOT EXISTS ... TEXT|VARCHAR
+  const alterRe = /ALTER TABLE (\S+) ADD COLUMN IF NOT EXISTS (\w+)\s+(TEXT|VARCHAR\(\d+\))/gi;
+  while ((cm = alterRe.exec(schemaSql)) !== null) {
+    expectedText.set(`${cm[1]}.${cm[2]}`.toLowerCase(), cm[3]);
+  }
+
+  // Query live columns that are integer but should be text
+  const { rows: intCols } = await pgPool.query(`
+    SELECT table_schema, table_name, column_name, udt_name
+    FROM information_schema.columns
+    WHERE table_schema NOT IN ('pg_catalog','information_schema','legacy','system')
+      AND udt_name IN ('int2','int4','int8')
+  `);
+
+  const toFix = intCols.filter(r =>
+    expectedText.has(`${r.table_schema}.${r.table_name}.${r.column_name}`.toLowerCase())
+  );
+
+  if (toFix.length === 0) return;
+
+  console.log(`[INFO] Fixing ${toFix.length} stale column types (old schema → v5 TEXT)...`);
+
+  // Drop legacy views that may depend on the columns
+  const { rows: views } = await pgPool.query(
+    `SELECT schemaname, viewname, definition FROM pg_views WHERE schemaname = 'legacy' ORDER BY viewname`
+  );
+  for (const v of views) {
+    await pgPool.query(`DROP VIEW IF EXISTS ${v.schemaname}.${v.viewname}`);
+  }
+
+  // Fix each column
+  for (const r of toFix) {
+    const table = `${r.table_schema}.${r.table_name}`;
+    const targetType = expectedText.get(`${table}.${r.column_name}`.toLowerCase());
+    try {
+      await pgPool.query(`ALTER TABLE ${table} ALTER COLUMN ${r.column_name} TYPE ${targetType} USING ${r.column_name}::TEXT`);
+    } catch (err) {
+      console.warn(`[WARN] Could not fix ${table}.${r.column_name}: ${err.message}`);
+    }
+  }
+
+  // Recreate legacy views
+  for (const v of views) {
+    try {
+      await pgPool.query(`CREATE VIEW ${v.schemaname}.${v.viewname} AS ${v.definition}`);
+    } catch (err) {
+      console.warn(`[WARN] Could not recreate view ${v.schemaname}.${v.viewname}: ${err.message}`);
+    }
+  }
+  console.log(`[INFO] Column type fixes applied. ${views.length} legacy views recreated.`);
 }
 
 // ── FK constraint helpers (drop before load, restore after) ──
@@ -280,8 +359,10 @@ async function main() {
   }
 
   // Restore FK constraints after all data is loaded
+  // SKIP_FK_RESTORE is set by migrate-all.js --target-db for non-final source DBs
+  // so FKs are only restored once after the last source completes.
   let hasFailures = false;
-  if (!opts.dryRun) {
+  if (!opts.dryRun && process.env.SKIP_FK_RESTORE !== '1') {
     try {
       await restoreForeignKeys(pgPool);
     } catch (err) {

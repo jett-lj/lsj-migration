@@ -3907,7 +3907,7 @@ ALTER TABLE commodity.commodities ADD COLUMN IF NOT EXISTS tempering_litres_per_
 ALTER TABLE commodity.commodities ADD COLUMN IF NOT EXISTS value_on_hand NUMERIC(12,4) NULL;
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS call_weight REAL NULL;
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS commod_mast_kgs REAL NULL;
-ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS commod_mast_value NUMERIC(12,4) NULL;
+ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS commod_mast_value NUMERIC(15,4) NULL;
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS ctr_id INTEGER;
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS feed_load_record_no INTEGER NULL;
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS kgs REAL NULL;
@@ -3916,7 +3916,7 @@ ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS reason_code SMALLINT 
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS ref_no VARCHAR(8);
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS staffid SMALLINT NULL;
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS tempered_weight_fed_kgs REAL NULL;
-ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS value NUMERIC(12,4) NULL;
+ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS value NUMERIC(15,4) NULL;
 ALTER TABLE commodity.period_stocks_closing_balance ADD COLUMN IF NOT EXISTS commodity_name VARCHAR(15) NULL;
 ALTER TABLE commodity.period_stocks_closing_balance ADD COLUMN IF NOT EXISTS stock_tons_weight REAL;
 ALTER TABLE commodity.period_stocks_closing_balance ADD COLUMN IF NOT EXISTS stock_value NUMERIC(12,4);
