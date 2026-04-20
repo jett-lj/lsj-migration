@@ -161,14 +161,14 @@ CREATE TABLE IF NOT EXISTS cattle.location_types (
 
 CREATE TABLE IF NOT EXISTS cattle.cows (
   id                     SERIAL PRIMARY KEY,
-  tag_number             TEXT NOT NULL,
+  ear_tag                TEXT NOT NULL,
   eid                    TEXT,
   tail_tag               TEXT,
-  vendor_ear_tag         TEXT,
+  previous_ear_tag       TEXT,
   group_name             TEXT,
   sub_group              TEXT,
-  breed                  TEXT,
-  sex                    TEXT DEFAULT 'female' CHECK (sex IN ('female', 'male')),
+  breed_id               INTEGER,
+  sex                    TEXT DEFAULT 'heifer' CHECK (sex IN ('heifer', 'cow', 'steer', 'bull')),
   hgp                    BOOLEAN DEFAULT FALSE,
   -- Financials
   background_cost_per_kg NUMERIC(12,4),
@@ -266,7 +266,7 @@ CREATE TABLE IF NOT EXISTS cattle.cows (
   created_at             TIMESTAMPTZ DEFAULT NOW(),
   updated_at             TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cows_tag ON cattle.cows(tag_number);
+CREATE INDEX IF NOT EXISTS idx_cows_tag ON cattle.cows(ear_tag);
 CREATE INDEX IF NOT EXISTS idx_cows_eid ON cattle.cows(eid);
 CREATE INDEX IF NOT EXISTS idx_cows_status ON cattle.cows(status);
 CREATE INDEX IF NOT EXISTS idx_cows_pen ON cattle.cows(pen_id);
@@ -1005,7 +1005,7 @@ CREATE TABLE IF NOT EXISTS health.drug_transfer_records (
 
 CREATE TABLE IF NOT EXISTS health.drug_purchase_events (
   id               SERIAL PRIMARY KEY,
-  drug_receival_id INTEGER NOT NULL,
+  drug_receival_id INTEGER NOT NULL UNIQUE,
   date_received    DATE NOT NULL,
   supplier_id      INTEGER,
   order_ref_number TEXT,
@@ -3818,27 +3818,6 @@ ALTER TABLE cattle.cattle_processed ADD COLUMN IF NOT EXISTS beastid INTEGER NUL
 ALTER TABLE cattle.cattle_processed ADD COLUMN IF NOT EXISTS draftgate SMALLINT NULL;
 ALTER TABLE cattle.cattle_processed ADD COLUMN IF NOT EXISTS saveddate TIMESTAMPTZ NULL;
 ALTER TABLE cattle.cattle_processed ADD COLUMN IF NOT EXISTS weighdate TIMESTAMPTZ NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS agentid INTEGER NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS agist_charged_up_to_date DATE NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS background_doll_per_kg NUMERIC(12,4) NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS current_loctype_id SMALLINT NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS customfeedownerid INTEGER NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS died BOOLEAN DEFAULT FALSE;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS dna_or_blood_number VARCHAR(15) NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS ear_tag VARCHAR(8);
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS esi_whold_until TIMESTAMPTZ NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS feedlot_entry_wght REAL NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS growergroupcode SMALLINT NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS last_modified_timestamp TIMESTAMPTZ NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS nfas_decl_numb VARCHAR(15) NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS nlis_tag_fail_at_induction BOOLEAN NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS pen_number VARCHAR(10) NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS pregtested BOOLEAN NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS purch_lot_no VARCHAR(12) NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS sale_weight REAL NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS start_weight REAL NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS vendorid INTEGER NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS whold_until TIMESTAMPTZ NULL;
 ALTER TABLE cattle.cull_reasons ADD COLUMN IF NOT EXISTS cull_reason VARCHAR(15) NULL;
 ALTER TABLE cattle.cull_reasons ADD COLUMN IF NOT EXISTS cull_reason_id SMALLINT;
 ALTER TABLE cattle.cull_reasons ADD COLUMN IF NOT EXISTS payrate_per_kg NUMERIC(12,4) NULL;
@@ -3874,6 +3853,7 @@ ALTER TABLE cattle.overhead_application_history ADD COLUMN IF NOT EXISTS period_
 ALTER TABLE cattle.overhead_application_history ADD COLUMN IF NOT EXISTS period_to DATE;
 ALTER TABLE cattle.pen_list_snapshots ADD COLUMN IF NOT EXISTS beast_id INTEGER;
 ALTER TABLE cattle.pen_list_snapshots ADD COLUMN IF NOT EXISTS pen TEXT;
+ALTER TABLE cattle.pen_list_snapshots ADD COLUMN IF NOT EXISTS cow_id INTEGER;
 ALTER TABLE cattle.purchase_lot_cattle ADD COLUMN IF NOT EXISTS last_modified_timestamp TIMESTAMPTZ NULL;
 ALTER TABLE cattle.purchase_lot_cattle ADD COLUMN IF NOT EXISTS numb_head SMALLINT NULL;
 ALTER TABLE cattle.purchase_lot_cattle ADD COLUMN IF NOT EXISTS price_cnts_per_kg NUMERIC(12,4) NULL;
@@ -4304,7 +4284,9 @@ ALTER TABLE finance.tr_payment_rates ADD COLUMN IF NOT EXISTS wght_to SMALLINT N
 ALTER TABLE health.autopsy_records ADD COLUMN IF NOT EXISTS tarchea_fluid BOOLEAN DEFAULT FALSE;
 ALTER TABLE health.chemical_inventory ADD COLUMN IF NOT EXISTS expirydate DATE NULL;
 ALTER TABLE health.diseases ADD COLUMN IF NOT EXISTS bodysystemid SMALLINT NULL;
-ALTER TABLE health.diseases ADD COLUMN IF NOT EXISTS disease_id SMALLINT;
+ALTER TABLE health.diseases ADD COLUMN IF NOT EXISTS disease_id SMALLINT UNIQUE;
+DROP INDEX IF EXISTS health.idx_diseases_disease_id CASCADE;
+CREATE UNIQUE INDEX idx_diseases_disease_id ON health.diseases(disease_id);
 ALTER TABLE health.diseases ADD COLUMN IF NOT EXISTS disease_name VARCHAR(25);
 ALTER TABLE health.diseases ADD COLUMN IF NOT EXISTS no_longer_used BOOLEAN DEFAULT FALSE;
 ALTER TABLE health.diseases ADD COLUMN IF NOT EXISTS penapp_disease_name VARCHAR(25) NULL;
@@ -4317,7 +4299,9 @@ ALTER TABLE health.drug_inventory_line_items ADD COLUMN IF NOT EXISTS drugid SMA
 ALTER TABLE health.drug_inventory_line_items ADD COLUMN IF NOT EXISTS units_per_boxorbottle INTEGER NULL;
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS antibiotic BOOLEAN NULL;
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS current_batch_numb VARCHAR(15) NULL;
-ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS drug_id SMALLINT;
+ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS drug_id SMALLINT UNIQUE;
+DROP INDEX IF EXISTS health.idx_drugs_drug_id CASCADE;
+CREATE UNIQUE INDEX idx_drugs_drug_id ON health.drugs(drug_id);
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS drug_name VARCHAR(50);
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS hgp BOOLEAN NULL;
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS inactive BOOLEAN NULL;
@@ -4702,7 +4686,7 @@ ALTER TABLE feed.pen_and_bunk_cleaning ALTER COLUMN event_date DROP NOT NULL;
 ALTER TABLE feed.feeding_details ALTER COLUMN feed_date DROP NOT NULL;
 ALTER TABLE system.system_info ALTER COLUMN info_key DROP NOT NULL;
 ALTER TABLE system.database_flags ALTER COLUMN flag_name DROP NOT NULL;
-ALTER TABLE cattle.cows ALTER COLUMN tag_number DROP NOT NULL;
+ALTER TABLE cattle.cows ALTER COLUMN ear_tag DROP NOT NULL;
 ALTER TABLE feed.cattle_feed_updates ALTER COLUMN pen_feeds_data_id DROP NOT NULL;
 ALTER TABLE pen.pensfed ALTER COLUMN feeddate DROP NOT NULL;
 ALTER TABLE feed.bunk_readings ALTER COLUMN observation_date DROP NOT NULL;
@@ -4731,31 +4715,31 @@ DECLARE
     _fks TEXT[][] := ARRAY[
         -- cattle → pen, purchasing, contacts
         ARRAY['fk_gps_cow',               'ALTER TABLE cattle.gps_locations ADD CONSTRAINT fk_gps_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE CASCADE'],
-        ARRAY['fk_cows_pen',              'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_cows_pen',              'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_pen FOREIGN KEY (pen_id) REFERENCES pen.pens_file(pen_number_id) ON DELETE SET NULL'],
         ARRAY['fk_cows_purchase_lot',     'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_purchase_lot FOREIGN KEY (purchase_lot_id) REFERENCES purchasing.purchase_lots(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_program_id',       'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_program_id FOREIGN KEY (program_id) REFERENCES cattle.cattle_program_types(id) ON DELETE SET NULL'],
-        ARRAY['fk_cows_vendor',           'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_vendor FOREIGN KEY (vendor_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
-        ARRAY['fk_cows_agent',            'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_agent FOREIGN KEY (agent_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
-        ARRAY['fk_cows_custom_feed_owner','ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_custom_feed_owner FOREIGN KEY (custom_feed_owner_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
+        ARRAY['fk_cows_vendor',           'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_vendor FOREIGN KEY (vendor_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_cows_agent',            'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_agent FOREIGN KEY (agent_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_cows_custom_feed_owner','ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_custom_feed_owner FOREIGN KEY (custom_feed_owner_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         -- cattle sub-tables → contacts, feed
-        ARRAY['fk_agistment_agistor',     'ALTER TABLE cattle.agistment_transfer_register ADD CONSTRAINT fk_agistment_agistor FOREIGN KEY (agistor_code) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
+        ARRAY['fk_agistment_agistor',     'ALTER TABLE cattle.agistment_transfer_register ADD CONSTRAINT fk_agistment_agistor FOREIGN KEY (agistor_code) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         ARRAY['fk_new_cattle_log_user',   'ALTER TABLE cattle.new_cattle_records_log ADD CONSTRAINT fk_new_cattle_log_user FOREIGN KEY (user_number) REFERENCES feed.feedlot_staff(user_id) ON DELETE SET NULL'],
         -- health → cattle, contacts, feed
         ARRAY['fk_sick_beast_cow',        'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_sick_beast_cattle',     'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_cattle FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
-        ARRAY['fk_sick_beast_disease',    'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_disease FOREIGN KEY (disease_id) REFERENCES health.diseases(id) ON DELETE SET NULL'],
+        ARRAY['fk_sick_beast_disease',    'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_disease FOREIGN KEY (disease_id) REFERENCES health.diseases(disease_id) ON DELETE SET NULL'],
         ARRAY['fk_sick_beast_diagnoser',  'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_diagnoser FOREIGN KEY (diagnoser_empl_id) REFERENCES feed.feedlot_staff(user_id) ON DELETE SET NULL'],
-        ARRAY['fk_sick_beast_custfeedowner','ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_custfeedowner FOREIGN KEY (customfeedownerid) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
-        ARRAY['fk_drugs_given_drug',      'ALTER TABLE health.drugs_given ADD CONSTRAINT fk_drugs_given_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(id) ON DELETE SET NULL'],
+        ARRAY['fk_sick_beast_custfeedowner','ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_custfeedowner FOREIGN KEY (customfeedownerid) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_drugs_given_drug',      'ALTER TABLE health.drugs_given ADD CONSTRAINT fk_drugs_given_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(drug_id) ON DELETE SET NULL'],
         ARRAY['fk_drugs_given_sb',        'ALTER TABLE health.drugs_given ADD CONSTRAINT fk_drugs_given_sb FOREIGN KEY (sb_rec_no) REFERENCES health.sick_beast_records(sb_rec_no) ON DELETE SET NULL'],
         ARRAY['fk_autopsy_sb',            'ALTER TABLE health.autopsy_records ADD CONSTRAINT fk_autopsy_sb FOREIGN KEY (sb_rec_no) REFERENCES health.sick_beast_records(sb_rec_no) ON DELETE RESTRICT'],
         ARRAY['fk_autopsy_beast',         'ALTER TABLE health.autopsy_records ADD CONSTRAINT fk_autopsy_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_sbt_sb',               'ALTER TABLE health.sick_beast_temperatures ADD CONSTRAINT fk_sbt_sb FOREIGN KEY (sb_rec_no) REFERENCES health.sick_beast_records(sb_rec_no) ON DELETE SET NULL'],
         ARRAY['fk_sbt_cow',              'ALTER TABLE health.sick_beast_temperatures ADD CONSTRAINT fk_sbt_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
-        ARRAY['fk_hgp_receival',          'ALTER TABLE health.drug_hgp_forms ADD CONSTRAINT fk_hgp_receival FOREIGN KEY (drug_receival_id) REFERENCES health.drugs_purchase_event(id) ON DELETE RESTRICT'],
-        ARRAY['fk_drugs_purchased_receival','ALTER TABLE health.drugs_purchased ADD CONSTRAINT fk_drugs_purchased_receival FOREIGN KEY (receival_id) REFERENCES health.drugs_purchase_event(id) ON DELETE RESTRICT'],
-        ARRAY['fk_drugs_purchased_drug',  'ALTER TABLE health.drugs_purchased ADD CONSTRAINT fk_drugs_purchased_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(id) ON DELETE RESTRICT'],
-        ARRAY['fk_inv_line_drug',         'ALTER TABLE health.drug_inventory_line_items ADD CONSTRAINT fk_inv_line_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(id) ON DELETE RESTRICT'],
+        ARRAY['fk_hgp_receival',          'ALTER TABLE health.drug_hgp_forms ADD CONSTRAINT fk_hgp_receival FOREIGN KEY (drug_receival_id) REFERENCES health.drug_purchase_events(drug_receival_id) ON DELETE RESTRICT'],
+        ARRAY['fk_drugs_purchased_receival','ALTER TABLE health.drugs_purchased ADD CONSTRAINT fk_drugs_purchased_receival FOREIGN KEY (receival_id) REFERENCES health.drug_purchase_events(drug_receival_id) ON DELETE RESTRICT'],
+        ARRAY['fk_drugs_purchased_drug',  'ALTER TABLE health.drugs_purchased ADD CONSTRAINT fk_drugs_purchased_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(drug_id) ON DELETE RESTRICT'],
+        ARRAY['fk_inv_line_drug',         'ALTER TABLE health.drug_inventory_line_items ADD CONSTRAINT fk_inv_line_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(drug_id) ON DELETE RESTRICT'],
         -- feed → pen, commodity, cattle, contacts
         ARRAY['fk_bunk_pen',              'ALTER TABLE feed.bunk_readings ADD CONSTRAINT fk_bunk_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens_file(pen_number_id) ON DELETE SET NULL'],
         ARRAY['fk_bunk_ration',           'ALTER TABLE feed.bunk_readings ADD CONSTRAINT fk_bunk_ration FOREIGN KEY (ration_code) REFERENCES feed.ration_descriptions(ration_code) ON DELETE SET NULL'],
@@ -4765,7 +4749,7 @@ DECLARE
         ARRAY['fk_cattle_feed_updates_cow','ALTER TABLE feed.cattle_feed_updates ADD CONSTRAINT fk_cattle_feed_updates_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_penfeedsdata_pen',      'ALTER TABLE feed.penfeedsdata ADD CONSTRAINT fk_penfeedsdata_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens_file(pen_number_id) ON DELETE RESTRICT'],
         ARRAY['fk_penfeedsdata_ration',   'ALTER TABLE feed.penfeedsdata ADD CONSTRAINT fk_penfeedsdata_ration FOREIGN KEY (ration_code) REFERENCES feed.ration_descriptions(ration_code) ON DELETE SET NULL'],
-        ARRAY['fk_vendor_decl_owner',     'ALTER TABLE feed.vendor_declarations ADD CONSTRAINT fk_vendor_decl_owner FOREIGN KEY (owner_contact_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
+        ARRAY['fk_vendor_decl_owner',     'ALTER TABLE feed.vendor_declarations ADD CONSTRAINT fk_vendor_decl_owner FOREIGN KEY (owner_contact_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         -- pen → cattle, feed
         ARRAY['fk_penshistory_cow',       'ALTER TABLE pen.penshistory ADD CONSTRAINT fk_penshistory_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_penshistory_beast',     'ALTER TABLE pen.penshistory ADD CONSTRAINT fk_penshistory_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
@@ -4780,31 +4764,31 @@ DECLARE
         ARRAY['fk_priceadj_lot',          'ALTER TABLE finance.price_adjustment_by_weight_range ADD CONSTRAINT fk_priceadj_lot FOREIGN KEY (lot_number) REFERENCES purchasing.purchase_lots(lot_number) ON DELETE RESTRICT'],
         ARRAY['fk_tandr_cow',             'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_tandr_beast',           'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
-        ARRAY['fk_tandr_agent',           'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_agent FOREIGN KEY (agent_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
-        ARRAY['fk_tandr_buyer',           'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_buyer FOREIGN KEY (buyer_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
-        ARRAY['fk_tandr_supplier',        'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_supplier FOREIGN KEY (supplier_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
+        ARRAY['fk_tandr_agent',           'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_agent FOREIGN KEY (agent_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_tandr_buyer',           'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_buyer FOREIGN KEY (buyer_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_tandr_supplier',        'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_supplier FOREIGN KEY (supplier_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         ARRAY['fk_accumfeed_cow',         'ALTER TABLE finance.beast_accumed_feed_by_commodity ADD CONSTRAINT fk_accumfeed_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_accumfeed_beast',       'ALTER TABLE finance.beast_accumed_feed_by_commodity ADD CONSTRAINT fk_accumfeed_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_accumfeed_commod',      'ALTER TABLE finance.beast_accumed_feed_by_commodity ADD CONSTRAINT fk_accumfeed_commod FOREIGN KEY (commodity_code) REFERENCES commodity.commodities(commodity_code) ON DELETE RESTRICT'],
         -- carcase → cattle, contacts
         ARRAY['fk_carcase_cow',           'ALTER TABLE carcase.carcase_data ADD CONSTRAINT fk_carcase_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_carcase_beast',         'ALTER TABLE carcase.carcase_data ADD CONSTRAINT fk_carcase_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
-        ARRAY['fk_carcase_sold_to',       'ALTER TABLE carcase.carcase_data ADD CONSTRAINT fk_carcase_sold_to FOREIGN KEY (sold_to_contact_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
-        ARRAY['fk_carcase_abattoir',      'ALTER TABLE carcase.carcase_data ADD CONSTRAINT fk_carcase_abattoir FOREIGN KEY (abattoir_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
+        ARRAY['fk_carcase_sold_to',       'ALTER TABLE carcase.carcase_data ADD CONSTRAINT fk_carcase_sold_to FOREIGN KEY (sold_to_contact_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_carcase_abattoir',      'ALTER TABLE carcase.carcase_data ADD CONSTRAINT fk_carcase_abattoir FOREIGN KEY (abattoir_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         ARRAY['fk_carcase_grade',         'ALTER TABLE carcase.carcase_data ADD CONSTRAINT fk_carcase_grade FOREIGN KEY (grade_id) REFERENCES carcase.carcase_grades(id) ON DELETE SET NULL'],
         -- purchasing → contacts
-        ARRAY['fk_purch_lots_owner',      'ALTER TABLE purchasing.purchase_lots ADD CONSTRAINT fk_purch_lots_owner FOREIGN KEY (cattle_owner_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
-        ARRAY['fk_purch_lots_vendor',     'ALTER TABLE purchasing.purchase_lots ADD CONSTRAINT fk_purch_lots_vendor FOREIGN KEY (vendor_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
-        ARRAY['fk_purch_lots_agent',      'ALTER TABLE purchasing.purchase_lots ADD CONSTRAINT fk_purch_lots_agent FOREIGN KEY (agent_code) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
+        ARRAY['fk_purch_lots_owner',      'ALTER TABLE purchasing.purchase_lots ADD CONSTRAINT fk_purch_lots_owner FOREIGN KEY (cattle_owner_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_purch_lots_vendor',     'ALTER TABLE purchasing.purchase_lots ADD CONSTRAINT fk_purch_lots_vendor FOREIGN KEY (vendor_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_purch_lots_agent',      'ALTER TABLE purchasing.purchase_lots ADD CONSTRAINT fk_purch_lots_agent FOREIGN KEY (agent_code) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         -- commodity → contacts
-        ARRAY['fk_commodcontracts_supplier','ALTER TABLE commodity.commodcontracts ADD CONSTRAINT fk_commodcontracts_supplier FOREIGN KEY (supplier_ac_no) REFERENCES contacts.contacts(id) ON DELETE RESTRICT'],
+        ARRAY['fk_commodcontracts_supplier','ALTER TABLE commodity.commodcontracts ADD CONSTRAINT fk_commodcontracts_supplier FOREIGN KEY (supplier_ac_no) REFERENCES contacts.contacts(contact_id) ON DELETE RESTRICT'],
         -- breeding → cattle, cattle.breeds
         ARRAY['fk_beast_breeding_cow',    'ALTER TABLE breeding.beast_breeding ADD CONSTRAINT fk_beast_breeding_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_beast_breeding_cattle', 'ALTER TABLE breeding.beast_breeding ADD CONSTRAINT fk_beast_breeding_cattle FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_beast_breeding_breed',  'ALTER TABLE breeding.beast_breeding ADD CONSTRAINT fk_beast_breeding_breed FOREIGN KEY (breed) REFERENCES cattle.breeds(name) ON DELETE SET NULL'],
         ARRAY['fk_sire_breed',            'ALTER TABLE breeding.breeding_sires ADD CONSTRAINT fk_sire_breed FOREIGN KEY (breed) REFERENCES cattle.breeds(name) ON DELETE SET NULL'],
         ARRAY['fk_dam_breed',             'ALTER TABLE breeding.breeding_dams ADD CONSTRAINT fk_dam_breed FOREIGN KEY (breed) REFERENCES cattle.breeds(name) ON DELETE SET NULL'],
-        ARRAY['fk_cow_breed',             'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cow_breed FOREIGN KEY (breed) REFERENCES cattle.breeds(name) ON DELETE SET NULL'],
+        ARRAY['fk_cows_breed_id',         'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_breed_id FOREIGN KEY (breed_id) REFERENCES cattle.breeds(id) ON DELETE SET NULL'],
         -- weighing → cattle
         ARRAY['fk_weighing_cow',          'ALTER TABLE weighing.weighing_events ADD CONSTRAINT fk_weighing_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_weighing_cattle',       'ALTER TABLE weighing.weighing_events ADD CONSTRAINT fk_weighing_cattle FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
@@ -4955,6 +4939,7 @@ ALTER TABLE health.drug_stocktake_records ADD COLUMN IF NOT EXISTS updated_at TI
 ALTER TABLE health.drug_transfers         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE health.drug_transfer_records  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE health.drug_purchase_events   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dpe_drug_receival_id ON health.drug_purchase_events(drug_receival_id);
 ALTER TABLE health.sick_beast_brd_symptoms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE feed.pending_feed_data        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE feed.cattle_feed_updates      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;

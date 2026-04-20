@@ -224,19 +224,19 @@ describe('Transform helpers', () => {
   });
 
   describe('mapSex', () => {
-    it('maps steer/bull/male codes to male', () => {
-      expect(mapSex('S')).toBe('male');
-      expect(mapSex('B')).toBe('male');
-      expect(mapSex('M')).toBe('male');
-      expect(mapSex('s')).toBe('male');
+    it('maps specific male codes', () => {
+      expect(mapSex('S')).toBe('steer');
+      expect(mapSex('B')).toBe('bull');
+      expect(mapSex('M')).toBe('steer');
+      expect(mapSex('s')).toBe('steer');
     });
 
-    it('maps other values to female', () => {
-      expect(mapSex('H')).toBe('female');
-      expect(mapSex('C')).toBe('female');
-      expect(mapSex('F')).toBe('female');
-      expect(mapSex(null)).toBe('female');
-      expect(mapSex('')).toBe('female');
+    it('maps specific female codes', () => {
+      expect(mapSex('H')).toBe('heifer');
+      expect(mapSex('C')).toBe('cow');
+      expect(mapSex('F')).toBe('heifer');
+      expect(mapSex(null)).toBe('heifer');
+      expect(mapSex('')).toBe('heifer');
     });
   });
 
@@ -607,7 +607,7 @@ describe('Migration runner Ã¢â‚¬â€ integration', () => {
       expect(cows.rows).toHaveLength(1);
       expect(cows.rows[0].ear_tag).toBe('A001');
       expect(cows.rows[0].eid).toBe('EID001');
-      expect(cows.rows[0].sex).toBe('male');
+      expect(cows.rows[0].sex).toBe('steer');  // 'S'
       expect(cows.rows[0].died).toBe(false);
       expect(cows.rows[0].legacy_beast_id).toBe(100);
 
@@ -666,7 +666,7 @@ describe('Migration runner Ã¢â‚¬â€ integration', () => {
 
       const res = await pgPool.query("SELECT * FROM cattle.cows WHERE ear_tag = 'D001'");
       expect(res.rows[0].died).toBe(true);
-      expect(res.rows[0].sex).toBe('female');
+      expect(res.rows[0].sex).toBe('heifer');  // 'H'
     });
 
     it('handles sold cattle status correctly', async () => {
@@ -703,7 +703,7 @@ describe('Migration runner Ã¢â‚¬â€ integration', () => {
       const res = await pgPool.query("SELECT * FROM cattle.cows WHERE ear_tag = 'S001'");
       expect(res.rows[0].sale_date).not.toBeNull();
       expect(res.rows[0].hgp).toBe(true);
-      expect(res.rows[0].sale_weight).toBe(550);
+      expect(res.rows[0].sale_weight_kg).toBe(550);
     });
   });
 
@@ -954,7 +954,7 @@ describe('Migration runner Ã¢â‚¬â€ integration', () => {
         // Seed a minimal cow so the test can run standalone
         await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Test') ON CONFLICT DO NOTHING");
         await pgPool.query(`
-          INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('NULL_AMT', 1, 88001, false, 'female')
+          INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex) VALUES ('NULL_AMT', 88001, false, 'heifer')
         `);
       }
       const cow = (await pgPool.query('SELECT id, legacy_beast_id FROM cattle.cows WHERE legacy_beast_id = 88001')).rows[0]
@@ -1177,14 +1177,14 @@ describe('Post-migration validation', () => {
     // Seed some valid data
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Angus')");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('T001', 1, 500, false, 'female')
+      INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex) VALUES ('T001', 500, false, 'heifer')
     `);
     const cowRes = await pgPool.query("SELECT id FROM cattle.cows WHERE ear_tag = 'T001'");
     const cowId = cowRes.rows[0].id;
 
     await pgPool.query(`
-      INSERT INTO weighing.weighing_events (beastid, weighing_type, weight, weigh_date)
-      VALUES ($1, 1, 300, NOW())
+      INSERT INTO weighing.weighing_events (beastid, cow_id, weighing_type, weight, weigh_date)
+      VALUES ($1, $1, 1, 300, NOW())
     `, [cowId]);
 
     // Create a mock MSSQL that returns matching counts
@@ -1239,12 +1239,18 @@ describe('Post-migration validation', () => {
     for (const c of dqChecks) {
       expect(c.passed).toBe(true);
     }
+
+    // cow_id populated checks should pass
+    const cowIdChecks = checks.filter(c => c.check.includes('cow_id populated'));
+    for (const c of cowIdChecks) {
+      expect(c.passed).toBe(true);
+    }
   });
 
   it('detects negative weights', async () => {
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 99, 'Test') ON CONFLICT DO NOTHING");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('NEG001', 1, 999, false, 'female')
+      INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex) VALUES ('NEG001', 999, false, 'heifer')
     `);
     const cowRes = await pgPool.query("SELECT id FROM cattle.cows WHERE ear_tag = 'NEG001'");
     const cowId = cowRes.rows[0].id;
@@ -1575,7 +1581,7 @@ describe('New table mappings', () => {
     // Set up cow first
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Angus')");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('C001', 1, 400, false, 'male')
+      INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex) VALUES ('C001', 400, false, 'steer')
     `);
     const cowId = (await pgPool.query("SELECT id FROM cattle.cows WHERE ear_tag = 'C001'")).rows[0].id;
     const beastIdMap = { 400: cowId };
@@ -1619,7 +1625,7 @@ describe('New table mappings', () => {
   it('migrates autopsy records with findings JSONB', async () => {
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Angus') ON CONFLICT DO NOTHING");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex) VALUES ('AP01', 1, 500, true, 'male')
+      INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex) VALUES ('AP01', 500, true, 'steer')
     `);
     const cowId = (await pgPool.query("SELECT id FROM cattle.cows WHERE ear_tag = 'AP01'")).rows[0].id;
     const beastIdMap = { 500: cowId };

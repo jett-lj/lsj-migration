@@ -747,6 +747,14 @@ const MANIFEST = {
     'Died',
     'Pen_Number',
     'Date_Archived',
+    'Weight_Gain',
+    'WG_per_Day',
+    'Profit_Loss',
+    'Carcase_Weight',
+    'Paddock_WG',
+    'Feedlot_WG',
+    'Date_Moved_Pen',
+    'In_Feedlot',
   ],
   Sick_Beast_Records: [
     'Beast_ID',
@@ -1673,13 +1681,13 @@ describe('Layer 2 â€” Golden row per table', () => {
     const cow = cows.rows[0];
     expect(cow.ear_tag).toBe('G001');
     expect(cow.eid).toBe('EID_G001');
-    expect(cow.sex).toBe('male');
+    expect(cow.sex).toBe('steer');  // 'S' → steer
     expect(cow.hgp).toBe(true);
     expect(cow.died).toBe(false);
-    expect(cow.feedlot_entry_wght).toBeCloseTo(350);
+    expect(cow.feedlot_entry_weight_kg).toBeCloseTo(350);
     expect(cow.dob).not.toBeNull();
     expect(cow.start_date).not.toBeNull();
-    expect(cow.start_weight).toBeCloseTo(350);
+    expect(cow.start_weight_kg).toBeCloseTo(350);
     expect(cow.notes).toBe('golden cow');
     expect(cow.pen_number).toBe('GP01');
     expect(cow.purch_lot_no).toBe('GL001');
@@ -1953,8 +1961,8 @@ describe('Layer 4 â€” FK chain tests', () => {
     // Seed a cow for the treatment to attach to
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Test') ON CONFLICT DO NOTHING");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex)
-      VALUES ('FK_DRUG', 1, 7001, false, 'female')
+      INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex)
+      VALUES ('FK_DRUG', 7001, false, 'heifer')
     `);
     const cowRes = await pgPool.query('SELECT id FROM cattle.cows WHERE legacy_beast_id = 7001');
     const cowId = cowRes.rows[0].id;
@@ -1999,8 +2007,8 @@ describe('Layer 4 â€” FK chain tests', () => {
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 2, 'CostTest') ON CONFLICT DO NOTHING");
     await pgPool.query("INSERT INTO finance.cost_codes (revexp_code, revexp_desc, rev_exp) VALUES (99, 'TestCode', 'E') ON CONFLICT DO NOTHING");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex)
-      VALUES ('FK_CC', 2, 7002, false, 'female')
+      INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex)
+      VALUES ('FK_CC', 7002, false, 'heifer')
     `);
     const cowRes = await pgPool.query('SELECT id FROM cattle.cows WHERE legacy_beast_id = 7002');
     const cowId = cowRes.rows[0].id;
@@ -2028,8 +2036,8 @@ describe('Layer 4 â€” FK chain tests', () => {
   it('pen auto-create â€” unknown pen is created on demand', async () => {
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 3, 'PenTest') ON CONFLICT DO NOTHING");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex)
-      VALUES ('FK_PEN', 3, 7003, false, 'female')
+      INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex)
+      VALUES ('FK_PEN', 7003, false, 'heifer')
     `);
     const cowRes = await pgPool.query('SELECT id FROM cattle.cows WHERE legacy_beast_id = 7003');
     const cowId = cowRes.rows[0].id;
@@ -2065,8 +2073,8 @@ describe('Layer 4 â€” FK chain tests', () => {
   it('diseaseIdSet sanitize â€” unknown disease_id set to null', async () => {
     await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 4, 'DiseaseTest') ON CONFLICT DO NOTHING");
     await pgPool.query(`
-      INSERT INTO cattle.cows (ear_tag, breed, legacy_beast_id, died, sex)
-      VALUES ('FK_DIS', 4, 7004, false, 'female')
+      INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex)
+      VALUES ('FK_DIS', 7004, false, 'heifer')
     `);
     const cowRes = await pgPool.query('SELECT id FROM cattle.cows WHERE legacy_beast_id = 7004');
     const cowId = cowRes.rows[0].id;

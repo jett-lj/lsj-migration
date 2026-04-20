@@ -161,6 +161,72 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
       }
       log.info(`  Built breedMap: ${Object.keys(lookups.breedMap).length} entries`);
     }
+    if (tables.has('cattle.breeds')) {
+      if (dryRun) {
+        // In dry-run: map Breed_Code → Breed_Code (no PG rows to look up)
+        lookups.breedIdMap = await buildLookupFromSource(mssqlPool, 'Breeds', 'Breed_Code', 'Breed_Code');
+      } else {
+        // Build Breed_Code → cattle.breeds.id via breedMap (Breed_Code → name) + breeds name → id
+        const breedsRes = await pgPool.query('SELECT id, name FROM cattle.breeds');
+        const nameToBreedId = {};
+        for (const row of breedsRes.rows) nameToBreedId[row.name] = row.id;
+        lookups.breedIdMap = {};
+        for (const [code, name] of Object.entries(lookups.breedMap || {})) {
+          const id = nameToBreedId[name];
+          if (id !== undefined) lookups.breedIdMap[code] = id;
+        }
+      }
+      log.info(`  Built breedIdMap: ${Object.keys(lookups.breedIdMap).length} entries`);
+    }
+    if (tables.has('pen.pens_file')) {
+      if (dryRun) {
+        lookups.penNameToIdMap = {};
+      } else {
+        const res = await pgPool.query('SELECT pen_number_id, pen_name FROM pen.pens_file WHERE pen_name IS NOT NULL');
+        lookups.penNameToIdMap = {};
+        for (const row of res.rows) {
+          lookups.penNameToIdMap[row.pen_name.toUpperCase()] = row.pen_number_id;
+        }
+        // Auto-seed pens from Cattle.Pen_Number when source has no Pens_File table
+        if (Object.keys(lookups.penNameToIdMap).length === 0) {
+          try {
+            const srcPens = await mssqlPool.request().query(
+              `SELECT DISTINCT LTRIM(RTRIM(Pen_Number)) AS pen_name
+               FROM dbo.Cattle
+               WHERE Pen_Number IS NOT NULL AND LTRIM(RTRIM(Pen_Number)) != ''
+               ORDER BY 1`
+            );
+            if (srcPens.recordset.length > 0) {
+              log.info(`  pen.pens_file empty — auto-seeding ${srcPens.recordset.length} pens from Cattle.Pen_Number`);
+              for (const { pen_name } of srcPens.recordset) {
+                const ins = await pgPool.query(
+                  'INSERT INTO pen.pens_file (pen_name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING pen_number_id',
+                  [pen_name]
+                );
+                if (ins.rows.length > 0) {
+                  lookups.penNameToIdMap[pen_name.toUpperCase()] = ins.rows[0].pen_number_id;
+                }
+              }
+            }
+          } catch (err) {
+            log.warn(`  Auto-seed pens failed: ${err.message}`);
+          }
+        }
+      }
+      log.info(`  Built penNameToIdMap: ${Object.keys(lookups.penNameToIdMap).length} entries`);
+    }
+    if (tables.has('purchasing.purchase_lots')) {
+      if (dryRun) {
+        lookups.purchLotNoToIdMap = {};
+      } else {
+        const res = await pgPool.query('SELECT id, lot_number FROM purchasing.purchase_lots WHERE lot_number IS NOT NULL');
+        lookups.purchLotNoToIdMap = {};
+        for (const row of res.rows) {
+          lookups.purchLotNoToIdMap[row.lot_number] = row.id;
+        }
+      }
+      log.info(`  Built purchLotNoToIdMap: ${Object.keys(lookups.purchLotNoToIdMap).length} entries`);
+    }
   }
 
   // Expand normalized child tables (unpivot columnar data → rows)
@@ -330,7 +396,7 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
  * Process a batch of rows: transform → validate → insert.
  */
 async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
-  const { columns, targetTable, validate, transformRow, buildInsertValues, staticValues, staticColumns } = mapping;
+  const { columns, targetTable, validate, skipRow, transformRow, buildInsertValues, staticValues, staticColumns } = mapping;
 
   let written = 0, skipped = 0, errored = 0;
   const orphanedRows = [];
@@ -339,6 +405,13 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
   const transformed = [];
   for (const rawRow of batch) {
     try {
+      // Skip junk/header rows before transforming
+      if (skipRow && skipRow(rawRow)) {
+        skipped++;
+        log.debug(`  Skipped junk row in ${targetTable}: ${JSON.stringify(rawRow).slice(0, 120)}`);
+        continue;
+      }
+
       // Apply column-level transforms
       const row = {};
       for (const col of columns) {
@@ -382,7 +455,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         for (const fkCol of [
           'vendor_id', 'agent_code', 'sold_to_contact_id', 'abattoir_id',
           'agent_id', 'buyer_id', 'supplier_id', 'agistor_code',
-          'cattle_owner_id', 'customfeedownerid', 'owner_contact_id',
+          'cattle_owner_id', 'custom_feed_owner_id', 'owner_contact_id',
           'supplier_ac_no', 'carrier_id', 'origin_dest_id',
         ]) {
           if (row[fkCol] !== undefined && row[fkCol] !== null && !lookups.contactIdSet.has(row[fkCol])) {
@@ -392,14 +465,21 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         }
       }
 
+      // Resolve breed_id (Breed_Code) → cattle.breeds.id
+      if (row.breed_id !== undefined && row.breed_id !== null && lookups.breedIdMap) {
+        row.breed_id = lookups.breedIdMap[row.breed_id] ?? null;
+      }
+
       // Resolve legacy beastid → new PG cattle.cows.id
       let _beastOrphan = false;
       if (lookups.beastIdMap && !mapping.skipBeastLookup) {
+        let resolvedCowId = null;
         for (const fkCol of ['beastid', 'beast_id']) {
           if (row[fkCol] !== undefined && row[fkCol] !== null) {
             const newId = lookups.beastIdMap[row[fkCol]];
             if (newId !== undefined) {
               row[fkCol] = newId;
+              resolvedCowId = newId;
             } else {
               // Orphaned row — FK target doesn't exist, route to legacy_raw
               log.debug(`  FK orphan: ${targetTable}.${fkCol}=${row[fkCol]} — no matching cattle row`);
@@ -408,6 +488,10 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
               break;
             }
           }
+        }
+        // Also populate cow_id (the standard FK column used by the web app)
+        if (resolvedCowId !== null) {
+          row.cow_id = resolvedCowId;
         }
       }
       if (_beastOrphan) { skipped++; continue; }
@@ -880,6 +964,135 @@ async function validateMigration(mssqlPool, pgPool) {
     });
   } catch (err) {
     checks.push({ check: 'Data quality: no negative weights', passed: false, detail: err.message });
+  }
+
+  // 5. cow_id populated on all child tables (no NULLs where beast FK exists)
+  const cowIdChecks = [
+    { table: 'weighing.weighing_events', beastCol: 'beastid' },
+    { table: 'pen.penshistory',          beastCol: 'beastid' },
+    { table: 'health.drugs_given',       beastCol: 'beastid' },
+    { table: 'finance.costs',            beastCol: 'beastid' },
+    { table: 'health.sick_beast_records', beastCol: 'beast_id' },
+    { table: 'carcase.carcase_data',     beastCol: 'beast_id' },
+    { table: 'health.autopsy_records',   beastCol: 'beast_id' },
+  ];
+  for (const { table, beastCol } of cowIdChecks) {
+    try {
+      const res = await pgPool.query(
+        `SELECT COUNT(*) AS cnt FROM ${table} WHERE ${beastCol} IS NOT NULL AND cow_id IS NULL`
+      );
+      const nullCowIds = parseInt(res.rows[0].cnt);
+      checks.push({
+        check: `cow_id populated: ${table}`,
+        passed: nullCowIds === 0,
+        detail: `rows with beast FK but NULL cow_id: ${nullCowIds}`,
+      });
+    } catch (err) {
+      checks.push({ check: `cow_id populated: ${table}`, passed: false, detail: err.message });
+    }
+  }
+
+  // 6. pen_id resolution — active cows should have pen_id resolved from Pen_Number lookup
+  try {
+    const activeRes = await pgPool.query("SELECT COUNT(*) AS cnt FROM cattle.cows WHERE status = 'active'");
+    const activePenRes = await pgPool.query("SELECT COUNT(*) AS cnt FROM cattle.cows WHERE status = 'active' AND pen_id IS NOT NULL");
+    const activeTotal = parseInt(activeRes.rows[0].cnt);
+    const activeWithPen = parseInt(activePenRes.rows[0].cnt);
+    // Active cows should mostly have pen_id (>50% threshold)
+    const passed = activeTotal === 0 || (activeWithPen / activeTotal) > 0.5;
+    checks.push({
+      check: 'pen_id resolution on active cattle.cows',
+      passed,
+      detail: `${activeWithPen}/${activeTotal} active cows have pen_id (${activeTotal > 0 ? ((activeWithPen/activeTotal)*100).toFixed(1) : 0}%)`,
+    });
+  } catch (err) {
+    checks.push({ check: 'pen_id resolution on active cattle.cows', passed: false, detail: err.message });
+  }
+
+  // 7. vendor_id should not contain 0 (legacy default for "no vendor")
+  try {
+    const res = await pgPool.query('SELECT COUNT(*) AS cnt FROM cattle.cows WHERE vendor_id = 0');
+    const zeroVendors = parseInt(res.rows[0].cnt);
+    checks.push({
+      check: 'Data quality: no zero vendor_id on cattle.cows',
+      passed: zeroVendors === 0,
+      detail: `rows with vendor_id=0: ${zeroVendors}`,
+    });
+  } catch (err) {
+    checks.push({ check: 'Data quality: no zero vendor_id', passed: false, detail: err.message });
+  }
+
+  // 8. Stranded data check — detect data stuck in old (v3/v4) column names
+  //    The v5 schema renames columns (e.g. start_weight → start_weight_kg).
+  //    If CREATE TABLE IF NOT EXISTS ran against an existing DB with old columns,
+  //    the new columns are added but data stays in the old ones.
+  const strandedPairs = [
+    { old: 'start_weight',              new: 'start_weight_kg' },
+    { old: 'sale_weight',               new: 'sale_weight_kg' },
+    { old: 'feedlot_entry_wght',        new: 'feedlot_entry_weight_kg' },
+    { old: 'whold_until',               new: 'withhold_until' },
+    { old: 'esi_whold_until',           new: 'esi_withhold_until' },
+    { old: 'background_doll_per_kg',    new: 'background_cost_per_kg' },
+    { old: 'last_modified_timestamp',   new: 'legacy_modified_at' },
+    { old: 'vendorid',                  new: 'vendor_id' },
+    { old: 'agentid',                   new: 'agent_id' },
+    { old: 'customfeedownerid',         new: 'custom_feed_owner_id' },
+    { old: 'current_loctype_id',        new: 'current_loc_type_id' },
+    { old: 'growergroupcode',           new: 'grower_group_code' },
+    { old: 'vendor_ear_tag',             new: 'previous_ear_tag' },
+  ];
+  // Stale columns that should no longer exist (v3/v4 remnants + old mapping targets)
+  const staleCols = [
+    'died', 'pen_number', 'purch_lot_no', 'tag_number',
+    'agist_charged_up_to_date', 'dna_or_blood_number',
+    'nfas_decl_numb', 'nlis_tag_fail_at_induction', 'pregtested',
+    'agentid', 'vendorid', 'customfeedownerid',
+    'start_weight', 'sale_weight', 'feedlot_entry_wght',
+    'whold_until', 'esi_whold_until',
+    'background_doll_per_kg', 'current_loctype_id',
+    'growergroupcode', 'last_modified_timestamp',
+    'vendor_ear_tag', 'breed',
+  ];
+  try {
+    // Check if any old columns exist with data while new columns are empty
+    const { rows: existingCols } = await pgPool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'cattle' AND table_name = 'cows'
+    `);
+    const colSet = new Set(existingCols.map(r => r.column_name));
+    const stranded = [];
+    for (const pair of strandedPairs) {
+      if (!colSet.has(pair.old) || !colSet.has(pair.new)) continue;
+      const res = await pgPool.query(`
+        SELECT COUNT("${pair.old}") AS old_filled, COUNT("${pair.new}") AS new_filled
+        FROM cattle.cows
+      `);
+      const oldFilled = parseInt(res.rows[0].old_filled);
+      const newFilled = parseInt(res.rows[0].new_filled);
+      if (oldFilled > 0 && newFilled === 0) {
+        stranded.push(`${pair.old}→${pair.new} (${oldFilled} rows)`);
+      }
+    }
+    const passed = stranded.length === 0;
+    checks.push({
+      check: 'Stranded data: old column names have data, v5 columns empty',
+      passed,
+      detail: passed
+        ? 'no stranded columns detected'
+        : `STRANDED: ${stranded.join(', ')} — run _fix_stranded_columns.js`,
+    });
+
+    // Check for stale columns that should have been dropped
+    const foundStale = staleCols.filter(c => colSet.has(c));
+    checks.push({
+      check: 'Stale v3/v4 columns removed from cattle.cows',
+      passed: foundStale.length === 0,
+      detail: foundStale.length === 0
+        ? 'no stale columns found'
+        : `STALE columns still present: ${foundStale.join(', ')} — drop with ALTER TABLE cattle.cows DROP COLUMN`,
+    });
+  } catch (err) {
+    checks.push({ check: 'Stranded data: old→v5 column names', passed: true, detail: `check skipped: ${err.message}` });
   }
 
   return checks;

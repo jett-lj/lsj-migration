@@ -196,8 +196,9 @@ async function restoreForeignKeys(pgPool) {
       fkStatements.push({ constraintName: m[1], sql: m[2] });
     }
   }
-  // Also extract standalone FK ALTERs
-  const inlineMatches = [...schema.matchAll(FK_INLINE)];
+  // Also extract standalone FK ALTERs (from schema text without DO blocks to avoid duplicates)
+  const schemaWithoutDoBlocks = schema.replace(FK_DO_BLOCK, '');
+  const inlineMatches = [...schemaWithoutDoBlocks.matchAll(FK_INLINE)];
   for (const match of inlineMatches) {
     fkStatements.push({ constraintName: match[1], sql: match[0].replace(/;$/, '') });
   }
@@ -210,6 +211,7 @@ async function restoreForeignKeys(pgPool) {
       await pgPool.query(sql + ' NOT VALID');
       added++;
     } catch (err) {
+      console.warn(`[WARN] FK add failed: ${constraintName} — ${err.message}`);
       failures.push({ constraint: constraintName, error: err.message });
     }
   }
@@ -363,6 +365,12 @@ async function main() {
   // so FKs are only restored once after the last source completes.
   let hasFailures = false;
   if (!opts.dryRun && process.env.SKIP_FK_RESTORE !== '1') {
+    // Clean up orphaned FK references that would block constraint validation
+    await pgPool.query(`
+      UPDATE finance.custfeed_invoices_list SET purch_lot_no = NULL
+      WHERE purch_lot_no IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM purchasing.purchase_lots pl WHERE pl.lot_number = purch_lot_no)
+    `);
     try {
       await restoreForeignKeys(pgPool);
     } catch (err) {

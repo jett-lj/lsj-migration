@@ -76,12 +76,18 @@ function toTime(v) {
   return `${hh}:${mm}:${ss}`;
 }
 
-/** Map legacy sex values ('S','H','B','C','M','F' etc.) to 'male'/'female' */
+/** Map legacy sex codes to specific cattle terminology */
 function mapSex(v) {
-  if (!v) return 'female';
-  const s = String(v).toUpperCase().trim();
-  if (['S', 'B', 'M'].includes(s)) return 'male';   // Steer / Bull / Male
-  return 'female';
+  if (!v) return 'heifer';
+  switch (String(v).toUpperCase().trim()) {
+    case 'S': return 'steer';   // castrated male
+    case 'B': return 'bull';    // intact male
+    case 'C': return 'cow';     // mature female (had a calf)
+    case 'H': return 'heifer';  // young female (no calf yet)
+    case 'M': return 'steer';   // generic male → steer (most common in feedlots)
+    case 'F': return 'heifer';  // generic female → heifer
+    default:  return 'heifer';
+  }
 }
 
 /** Derive cow status from legacy flags */
@@ -440,37 +446,48 @@ const mappings = [
                    Lot_closeout_date, Vendor_Treated_Bovilus,
                    Agist_Charged_Up_To_Date,
                    last_oracle_costs, last_oracle_date,
-                   Marbling_bonus_lot, Last_Modified_timestamp
+                   Marbling_bonus_lot, Last_Modified_timestamp,
+                   Weight_Gain, WG_per_Day, Profit_Loss,
+                   Carcase_Weight, Paddock_WG, Feedlot_WG,
+                   Date_Moved_Pen, In_Feedlot
             FROM ranked WHERE _rn = 1
             ORDER BY BeastID`,
     countQuery: `SELECT COUNT(DISTINCT BeastID) AS cnt FROM dbo.Cattle`,
+    // Skip header/label rows that exist in some source databases (e.g. "Barmount", "Ear Tag")
+    skipRow(raw) {
+      const tag = (raw.Ear_Tag || '').trim();
+      const eid = (raw.EID || '').trim();
+      // Rows with no EID and a non-numeric ear tag that matches known junk patterns
+      if (!eid && /^(ear\s*tag|eid|beastid)$/i.test(tag)) return true;
+      // Rows where ear_tag is the database/farm name (no EID, zero weight)
+      if (!eid && raw.Start_Weight === 0 && !/^\d/.test(tag)) return true;
+      return false;
+    },
     columns: [
       { source: 'BeastID',             target: 'legacy_beast_id' },
       { source: 'Ear_Tag',             target: 'ear_tag',                 transform: trimOrNull },
       { source: 'EID',                 target: 'eid',                     transform: trimOrNull },
-      { source: 'Breed',               target: 'breed',                   transform: toNum },
+      { source: 'Breed',               target: 'breed_id',                transform: toNum },
       { source: 'Sex',                 target: 'sex',                     transform: mapSex },
       { source: 'HGP',                 target: 'hgp',                     transform: toBool },
-      { source: 'Died',                target: 'died',                    transform: toBool },
       { source: 'Feedlot_Entry_Date',  target: 'feedlot_entry_date',      transform: toDate },
-      { source: 'Feedlot_Entry_Wght',  target: 'feedlot_entry_wght',      transform: toNum },
+      { source: 'Feedlot_Entry_Date',  target: 'entry_date',              transform: toDate },
+      { source: 'Feedlot_Entry_Wght',  target: 'feedlot_entry_weight_kg',  transform: toNum },
       { source: 'Sale_Date',           target: 'sale_date',               transform: (v) => { const d = toDate(v); return d && d > '1901-01-01' ? d : null; } },
-      { source: 'Sale_Weight',         target: 'sale_weight',             transform: toNum },
+      { source: 'Sale_Weight',         target: 'sale_weight_kg',          transform: toNum },
       { source: 'DOB',                 target: 'dob',                     transform: toDate },
       { source: 'Start_Date',          target: 'start_date',              transform: toDate },
-      { source: 'Start_Weight',        target: 'start_weight',            transform: toNum },
-      { source: 'Pen_Number',          target: 'pen_number',              transform: trimOrNull },
+      { source: 'Start_Weight',        target: 'start_weight_kg',         transform: toNum },
       { source: 'Notes',               target: 'notes',                   transform: trimOrNull },
-      { source: 'Purch_Lot_No',        target: 'purch_lot_no',            transform: trimOrNull },
       { source: 'Date_Archived',       target: 'date_archived',           transform: toDate },
       { source: 'Tail_Tag',            target: 'tail_tag',                transform: trimOrNull },
-      { source: 'Vendor_Ear_Tag',      target: 'vendor_ear_tag',          transform: trimOrNull },
+      { source: 'Vendor_Ear_Tag',      target: 'previous_ear_tag',        transform: trimOrNull },
       { source: 'Group_Name',          target: 'group_name',              transform: trimOrNull },
       { source: 'Sub_Group',           target: 'sub_group',               transform: trimOrNull },
-      { source: 'Background_Doll_per_Kg', target: 'background_doll_per_kg', transform: toNum },
+      { source: 'Background_Doll_per_Kg', target: 'background_cost_per_kg', transform: toNum },
       { source: 'BG_Fee',              target: 'bg_fee',                  transform: toNum },
       { source: 'Teeth',               target: 'teeth',                   transform: toNum },
-      { source: 'WHold_Until',         target: 'whold_until',             transform: toDate },
+      { source: 'WHold_Until',         target: 'withhold_until',          transform: toDate },
       { source: 'Date_died',           target: 'date_died',               transform: toDate },
       { source: 'Sire_Tag',            target: 'sire_tag',                transform: trimOrNull },
       { source: 'Dam_Tag',             target: 'dam_tag',                 transform: trimOrNull },
@@ -484,12 +501,12 @@ const mappings = [
       { source: 'Market_Category',     target: 'market_category',         transform: toNum },
       { source: 'Cull_Reason',         target: 'cull_reason',             transform: toNum },
       { source: 'Agist_Lot_No',        target: 'agist_lot_no',            transform: trimOrNull },
-      { source: 'Current_LocType_ID',  target: 'current_loctype_id',      transform: toNum },
+      { source: 'Current_LocType_ID',  target: 'current_loc_type_id',     transform: toNum },
       { source: 'Old_RFID',            target: 'old_rfid',                transform: trimOrNull },
       { source: 'Date_RFID_Changed',   target: 'date_rfid_changed',       transform: toDate },
       { source: 'Trial_No_ID',         target: 'trial_no_id',             transform: toNum },
-      { source: 'NFAS_Decl_Numb',      target: 'nfas_decl_numb',          transform: trimOrNull },
-      { source: 'GrowerGroupCode',     target: 'growergroupcode',         transform: toNum },
+      { source: 'NFAS_Decl_Numb',      target: 'nfas_decl_number',        transform: trimOrNull },
+      { source: 'GrowerGroupCode',     target: 'grower_group_code',       transform: toNum },
       { source: 'Date_culled',         target: 'date_culled',             transform: toDate },
       { source: 'Agistment_PIC',       target: 'agistment_pic',           transform: trimOrNull },
       { source: 'Blood_vial_number',   target: 'blood_vial_number',       transform: trimOrNull },
@@ -498,37 +515,55 @@ const mappings = [
       { source: 'Pregnant',            target: 'pregnant',                transform: toBool },
       { source: 'Planned_kill_date',   target: 'planned_kill_date',       transform: toDate },
       { source: 'Beast_Sale_Type_ID',  target: 'beast_sale_type_id',      transform: toNum },
-      { source: 'ESI_Whold_until',     target: 'esi_whold_until',         transform: toDate },
-      { source: 'PregTested',          target: 'pregtested',              transform: toBool },
-      { source: 'CustomFeedOwnerID',   target: 'customfeedownerid',       transform: toFkId },
+      { source: 'ESI_Whold_until',     target: 'esi_withhold_until',      transform: toDate },
+      { source: 'PregTested',          target: 'preg_tested',             transform: toBool },
+      { source: 'CustomFeedOwnerID',   target: 'custom_feed_owner_id',    transform: toFkId },
       { source: 'Species',             target: 'species',                 transform: trimOrNull },
-      { source: 'NLIS_tag_fail_at_induction', target: 'nlis_tag_fail_at_induction', transform: toBool },
-      { source: 'DNA_or_Blood_Number', target: 'dna_or_blood_number',     transform: trimOrNull },
+      { source: 'NLIS_tag_fail_at_induction', target: 'nlis_tag_fail',     transform: toBool },
+      { source: 'DNA_or_Blood_Number', target: 'dna_blood_number',        transform: trimOrNull },
       { source: 'DOF_scheduled',       target: 'dof_scheduled',           transform: toNum },
       { source: 'EU',                  target: 'eu',                      transform: toBool },
       { source: 'EU_Dec_No',           target: 'eu_dec_no',               transform: trimOrNull },
       { source: 'Paddock_Tag',         target: 'paddock_tag',             transform: trimOrNull },
       { source: 'Outgoing_NVD',        target: 'outgoing_nvd',            transform: trimOrNull },
       { source: 'Agisted_animal',      target: 'agisted_animal',          transform: toBool },
-      { source: 'VendorID',            target: 'vendorid',                transform: toNum },
-      { source: 'AgentID',             target: 'agentid',                 transform: toNum },
+      { source: 'VendorID',            target: 'vendor_id',               transform: toFkId },
+      { source: 'AgentID',             target: 'agent_id',                transform: toFkId },
       { source: 'Bovilus_Shots',       target: 'bovilus_shots',           transform: toNum },
-      { source: 'Program_ID',          target: 'program_id',              transform: toNum },
+      { source: 'Program_ID',          target: 'program_id',              transform: toFkId },
       { source: 'Abattoir_Culled',     target: 'abattoir_culled',         transform: toBool },
       { source: 'Abattoir_Condemned',  target: 'abattoir_condemned',      transform: toBool },
       { source: 'Lot_closeout_date',   target: 'lot_closeout_date',       transform: toDate },
       { source: 'Vendor_Treated_Bovilus', target: 'vendor_treated_bovilus', transform: toBool },
-      { source: 'Agist_Charged_Up_To_Date', target: 'agist_charged_up_to_date', transform: toDate },
+      { source: 'Agist_Charged_Up_To_Date', target: 'agist_charged_to_date',    transform: toDate },
       { source: 'last_oracle_costs',   target: 'last_oracle_costs',       transform: toNum },
       { source: 'last_oracle_date',    target: 'last_oracle_date',        transform: toDate },
       { source: 'Marbling_bonus_lot',  target: 'marbling_bonus_lot',      transform: trimOrNull },
-      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
+      { source: 'Last_Modified_timestamp', target: 'legacy_modified_at',     transform: toDate },
+      { source: 'Weight_Gain',          target: 'weight_gain_kg',          transform: toNum },
+      { source: 'WG_per_Day',           target: 'wg_per_day',              transform: toNum },
+      { source: 'Profit_Loss',          target: 'profit_loss',             transform: toNum },
+      { source: 'Carcase_Weight',       target: 'carcase_weight_kg',       transform: toNum },
+      { source: 'Paddock_WG',           target: 'paddock_weight_gain_kg',  transform: toNum },
+      { source: 'Feedlot_WG',           target: 'feedlot_weight_gain_kg',  transform: toNum },
+      { source: 'Date_Moved_Pen',       target: 'date_moved_pen',          transform: toDate },
+      { source: 'In_Feedlot',           target: 'in_feedlot',              transform: toBool },
     ],
     transformRow(rawRow, row, lookups) {
-      const breedCode = rawRow.Breed;
-      const map = lookups.breedMap || {};
-      const name = map[breedCode] || map[String(breedCode)] || null;
-      row.breed = name && !JUNK_BREEDS.has(name) ? name : null;
+      // Derive status from legacy flags (Died, Sale_Date, Date_Archived)
+      row.status = deriveCowStatus(rawRow);
+
+      // Resolve pen_id from Pen_Number → pen.pens_file.pen_name (case-insensitive)
+      const penName = trimOrNull(rawRow.Pen_Number);
+      if (penName && lookups.penNameToIdMap) {
+        row.pen_id = lookups.penNameToIdMap[penName.toUpperCase()] || null;
+      }
+
+      // Resolve purchase_lot_id from Purch_Lot_No → purchasing.purchase_lots.lot_number
+      const lotNo = trimOrNull(rawRow.Purch_Lot_No);
+      if (lotNo && lookups.purchLotNoToIdMap) {
+        row.purchase_lot_id = lookups.purchLotNoToIdMap[lotNo] || null;
+      }
     },
   },
 
@@ -595,7 +630,7 @@ const mappings = [
       { source: 'Units_Given',    target: 'units_given',        transform: (v) => { const n = toNum(v); return (n !== null && n < 0) ? null : n; } },
       { source: 'Date_Given',     target: 'date_given',         transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
       { source: 'Withold_Until',  target: 'withold_until',      transform: toDate },
-      { source: 'SB_Rec_No',      target: 'sb_rec_no',          transform: toNum },
+      { source: 'SB_Rec_No',      target: 'sb_rec_no',          transform: (v) => { const n = toNum(v); return (n === 0 || n === -1) ? null : n; } },
       { source: 'User_Initials',  target: 'user_initials',      transform: trimOrNull },
       { source: 'Ear_Tag_No',     target: 'ear_tag_no',         transform: trimOrNull },
       { source: 'Batch_No',       target: 'batch_no',           transform: trimOrNull },
@@ -673,7 +708,7 @@ const mappings = [
       { source: 'Insurance_value',   target: 'insurance_value',        transform: toNum },
       { source: 'Insurance_paid',    target: 'insurance_paid',         transform: toBool },
       { source: 'DOF_when_sick',     target: 'dof_when_sick',          transform: toNum },
-      { source: 'Diagnoser_Empl_ID', target: 'diagnoser_empl_id',     transform: toNum },
+      { source: 'Diagnoser_Empl_ID', target: 'diagnoser_empl_id',     transform: toFkId },
       { source: 'User_Initials',     target: 'user_initials',          transform: trimOrNull },
       { source: 'CustomFeedOwnerID', target: 'customfeedownerid',      transform: toFkId },
       { source: 'Purch_Lot_No',      target: 'purch_lot_no',           transform: trimOrNull },

@@ -67,25 +67,25 @@ function pgConfig() {
   };
 }
 
-// Matches v3 FK blocks: ALTER TABLE schema.table ADD CONSTRAINT fk_name\n    FOREIGN KEY (...) REFERENCES ...;
-const FK_BLOCK_REGEX = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+// Matches the v5 FK DO-block (idempotent DO $$ with _fks TEXT[][] array)
+const FK_DO_BLOCK_RE = /DO \$\$\r?\nDECLARE\r?\n\s+_fk\b[\s\S]*?END\r?\n\$\$;/;
 
-const V3_SCHEMAS = [
+const ALL_SCHEMAS = [
   'breeding', 'carcase', 'cattle', 'commodity', 'contacts', 'digistar',
-  'feed', 'finance', 'health', 'pen', 'purchasing', 'reporting',
-  'system', 'transport', 'weighing'
+  'feed', 'finance', 'health', 'legacy', 'operations', 'pen', 'purchasing',
+  'reporting', 'system', 'transport', 'weighing'
 ];
 
 async function ensureSchema(pgPool) {
-  const schemaPath = path.join(__dirname, 'optimized_schema_postgres_v3.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
-  // Strip FK constraint blocks — they are restored after data load by restoreForeignKeys()
-  const schemaWithoutFks = schema.replace(FK_BLOCK_REGEX, '');
+  // Strip FK DO-block — constraints are restored after data load by restoreForeignKeys()
+  const schemaWithoutFks = schema.replace(FK_DO_BLOCK_RE, '-- [FK block deferred to post-load]');
   await pgPool.query(schemaWithoutFks);
 }
 
 async function dropAllForeignKeys(pgPool) {
-  const schemaList = V3_SCHEMAS.map(s => `'${s}'`).join(', ');
+  const schemaList = ALL_SCHEMAS.map(s => `'${s}'`).join(', ');
   const { rows } = await pgPool.query(`
     SELECT tc.table_schema, tc.table_name, tc.constraint_name
     FROM information_schema.table_constraints tc
@@ -100,51 +100,30 @@ async function dropAllForeignKeys(pgPool) {
 }
 
 async function restoreForeignKeys(pgPool) {
-  const schemaPath = path.join(__dirname, 'optimized_schema_postgres_v3.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
 
-  // Extract ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY blocks
-  const fkBlocks = [...schema.matchAll(FK_BLOCK_REGEX)];
-
-  // Add each FK constraint with NOT VALID (skips existing-data check)
-  let added = 0;
-  const failures = [];
-  for (const match of fkBlocks) {
-    const block = match[0];
-    const constraintName = match[1];
-    // Append NOT VALID before the final semicolon
-    const notValidBlock = block.replace(/;$/, ' NOT VALID;');
-    try {
-      await pgPool.query(notValidBlock);
-      added++;
-    } catch (err) {
-      failures.push({ constraint: constraintName, error: err.message });
-    }
+  // Extract the FK DO-block (idempotent — uses IF NOT EXISTS internally)
+  const match = schema.match(FK_DO_BLOCK_RE);
+  if (!match) {
+    console.warn('[WARN] No FK DO-block found in schema file — skipping FK restore');
+    return;
   }
-  console.log(`[INFO] FK constraints added (NOT VALID): ${added}/${fkBlocks.length}`);
 
-  // Validate each constraint — checks existing data, logs failures
-  const schemaList = V3_SCHEMAS.map(s => `'${s}'`).join(', ');
+  try {
+    await pgPool.query(match[0]);
+    console.log('[INFO] FK constraints restored via idempotent DO block');
+  } catch (err) {
+    console.warn(`[WARN] FK restoration error: ${err.message}`);
+  }
+
+  // Count how many were actually created
+  const schemaList = ALL_SCHEMAS.map(s => `'${s}'`).join(', ');
   const { rows } = await pgPool.query(`
-    SELECT conrelid::regclass AS table_name, conname AS constraint_name
-    FROM pg_constraint c
-    JOIN pg_namespace n ON n.oid = c.connamespace
-    WHERE c.contype = 'f' AND NOT c.convalidated AND n.nspname IN (${schemaList})
+    SELECT COUNT(*) AS cnt FROM information_schema.table_constraints tc
+    WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema IN (${schemaList})
   `);
-  let validated = 0;
-  for (const { table_name, constraint_name } of rows) {
-    try {
-      await pgPool.query(`ALTER TABLE ${table_name} VALIDATE CONSTRAINT "${constraint_name}"`);
-      validated++;
-    } catch (err) {
-      console.warn(`[WARN] FK validation failed: ${table_name}.${constraint_name} — ${err.message}`);
-      failures.push({ constraint: constraint_name, error: err.message });
-    }
-  }
-  console.log(`[INFO] FK constraints validated: ${validated}/${rows.length}`);
-  if (failures.length > 0) {
-    console.warn(`[WARN] ${failures.length} FK constraint(s) have orphaned data — constraints added but not fully validated.`);
-  }
+  console.log(`[INFO] FK constraints in place: ${rows[0].cnt}`);
 }
 
 /**

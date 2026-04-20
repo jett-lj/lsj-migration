@@ -200,12 +200,12 @@ describe('Transform functions — exhaustive', () => {
 
   describe('mapSex', () => {
     it.each([
-      [null, 'female'], [undefined, 'female'], ['', 'female'],
-      ['S', 'male'], ['B', 'male'], ['M', 'male'],
-      ['s', 'male'], ['b', 'male'], ['m', 'male'],
-      ['F', 'female'], ['H', 'female'], ['C', 'female'],
-      ['f', 'female'], ['h', 'female'],
-      ['X', 'female'], // unknown defaults to female
+      [null, 'heifer'], [undefined, 'heifer'], ['', 'heifer'],
+      ['S', 'steer'], ['B', 'bull'], ['M', 'steer'],
+      ['s', 'steer'], ['b', 'bull'], ['m', 'steer'],
+      ['F', 'heifer'], ['H', 'heifer'], ['C', 'cow'],
+      ['f', 'heifer'], ['h', 'heifer'],
+      ['X', 'heifer'], // unknown defaults to heifer
     ])('mapSex(%j) → %j', (input, expected) => {
       expect(mapSex(input)).toBe(expected);
     });
@@ -481,6 +481,9 @@ describe('Per-table column integration', () => {
         last_oracle_date: '2024-06-15', Marbling_bonus_lot: 'MB001',
         Last_Modified_timestamp: '2024-06-20T14:30:00Z',
         Died: false, Pen_Number: 'P01', Date_Archived: null,
+        Weight_Gain: 239.5, WG_per_Day: 1.45, Profit_Loss: -52.30,
+        Carcase_Weight: 365.0, Paddock_WG: 0.35, Feedlot_WG: 1.10,
+        Date_Moved_Pen: '2024-03-01', In_Feedlot: 'Y',
       }],
 
       Purchase_Lots: [{
@@ -713,18 +716,18 @@ describe('Per-table column integration', () => {
     const c = rows[0];
     expect(c.ear_tag).toBe('CT001');
     expect(c.eid).toBe('982000123456789');
-    expect(c.sex).toBe('male');              // 'B' → male
+    expect(c.sex).toBe('bull');              // 'B' → bull
     expect(c.hgp).toBe(true);
-    expect(c.feedlot_entry_wght).toBeCloseTo(380.5);
-    expect(c.sale_weight).toBeCloseTo(620.0);
-    expect(c.start_weight).toBeCloseTo(380.5);
+    expect(c.feedlot_entry_weight_kg).toBeCloseTo(380.5);
+    expect(c.sale_weight_kg).toBeCloseTo(620.0);
+    expect(c.start_weight_kg).toBeCloseTo(380.5);
     expect(c.notes).toBe('Good animal');
     expect(c.purch_lot_no).toBe('PL001');
     expect(c.tail_tag).toBe('55');
-    expect(c.vendor_ear_tag).toBe('VET-55');
+    expect(c.previous_ear_tag).toBe('VET-55');
     expect(c.group_name).toBe('Group A');
     expect(c.sub_group).toBe('Sub1');
-    expect(c.background_doll_per_kg).toBeCloseTo(3.50);
+    expect(c.background_cost_per_kg).toBeCloseTo(3.50);
     expect(c.bg_fee).toBeCloseTo(150.00);
     expect(c.teeth).toBe(4);
     expect(c.sire_tag).toBe('SIRE001');
@@ -736,24 +739,24 @@ describe('Per-table column integration', () => {
     expect(c.frame_size).toBe('L');
     expect(c.custom_feeder).toBe(false);
     expect(c.dof_in_prev_fl).toBe(30);
-    expect(c.nfas_decl_numb).toBe('NFAS001');
-    expect(c.growergroupcode).toBe(42);      // toNum(42) → 42
+    expect(c.nfas_decl_number).toBe('NFAS001');
+    expect(c.grower_group_code).toBe(42);
     expect(c.agistment_pic).toBe('PIC001');
     expect(c.blood_vial_number).toBe('BV100');
     expect(c.ap_lot).toBe('APL1');
     expect(c.lifetime_traceable).toBe(true);
     expect(c.pregnant).toBe(false);
-    expect(c.pregtested).toBe(false);
+    expect(c.preg_tested).toBe(false);
     expect(c.species).toBe('Bovine');
-    expect(c.nlis_tag_fail_at_induction).toBe(false);
-    expect(c.dna_or_blood_number).toBe('DNA001');
+    expect(c.nlis_tag_fail).toBe(false);
+    expect(c.dna_blood_number).toBe('DNA001');
     expect(c.dof_scheduled).toBe(120);
     expect(c.eu).toBe(true);
     expect(c.eu_dec_no).toBe('EU2024-001');
     expect(c.paddock_tag).toBe('PT55');
     expect(c.outgoing_nvd).toBe('NVD001');
     expect(c.agisted_animal).toBe(false);
-    expect(c.customfeedownerid).toBeNull();
+    expect(c.custom_feed_owner_id).toBeNull();
     expect(c.bovilus_shots).toBe(2);
     expect(c.program_id).toBe(1);
     expect(c.abattoir_culled).toBe(false);
@@ -764,7 +767,16 @@ describe('Per-table column integration', () => {
     expect(c.died).toBe(false);
     expect(c.pen_number).toBe('P01');
     expect(c.status).toBe('active');         // status not mapped; uses schema DEFAULT
-    expect(c.last_modified_timestamp).not.toBeNull();
+    expect(c.legacy_modified_at).not.toBeNull();
+    // New 8 columns
+    expect(c.weight_gain_kg).toBeCloseTo(239.5);
+    expect(c.wg_per_day).toBeCloseTo(1.45);
+    expect(c.profit_loss).toBeCloseTo(-52.30);
+    expect(c.carcase_weight_kg).toBeCloseTo(365.0);
+    expect(c.paddock_weight_gain_kg).toBeCloseTo(0.35);
+    expect(c.feedlot_weight_gain_kg).toBeCloseTo(1.10);
+    expect(c.date_moved_pen).not.toBeNull();
+    expect(c.in_feedlot).toBe(true);
   });
 
   // ── Weighing_Events ───────────────────────────────
