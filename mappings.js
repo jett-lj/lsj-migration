@@ -3094,6 +3094,7 @@ const mappings = [
   {
     order: 10,
     sourceTable: 'Bunk_Code_Desc',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.bunk_code_desc',
     query: 'SELECT Ration_Type, Bunk_Code, Kgs_Head_Adj, ID FROM dbo.Bunk_Code_Desc ORDER BY ID',
     columns: [
@@ -3106,6 +3107,7 @@ const mappings = [
   {
     order: 10,
     sourceTable: 'Ration_Types',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.ration_types',
     query: 'SELECT Ration_Type_ID, Ration_Type, Group_Name, Notes FROM dbo.Ration_Types ORDER BY Ration_Type_ID',
     columns: [
@@ -3119,6 +3121,7 @@ const mappings = [
   {
     order: 10,
     sourceTable: 'Feed_Month_End_date',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feed_month_end_date',
     query: 'SELECT Current_MonthEnd_Date, Current_MonthStart_Date, ID FROM dbo.Feed_Month_End_date ORDER BY ID',
     columns: [
@@ -3131,6 +3134,7 @@ const mappings = [
   {
     order: 10,
     sourceTable: 'Transaction_Types',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'system.transaction_types',
     query: 'SELECT Trans_Type_ID, Trans_Type_Short, Trans_Type_Long, Trans_Effect FROM dbo.Transaction_Types ORDER BY Trans_Type_ID',
     columns: [
@@ -3144,6 +3148,7 @@ const mappings = [
   {
     order: 10,
     sourceTable: 'MMEC_Table',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'system.mmec_table',
     query: 'SELECT DOF, Target_Multiplier, Max_Multiplier, Bump_If_Slick, ID FROM dbo.MMEC_Table ORDER BY ID',
     columns: [
@@ -3158,6 +3163,7 @@ const mappings = [
   {
     order: 10,
     sourceTable: 'LoadDockageReasons',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'system.lookups',
     query: 'SELECT Reason_ID, Dockage_Reason FROM dbo.LoadDockageReasons ORDER BY Reason_ID',
     columns: [
@@ -3170,6 +3176,7 @@ const mappings = [
   {
     order: 10,
     sourceTable: 'Manure_Types',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'system.lookups',
     query: 'SELECT ID, Manure_Type FROM dbo.Manure_Types ORDER BY ID',
     columns: [
@@ -3182,6 +3189,7 @@ const mappings = [
   {
     order: 10,
     sourceTable: 'Reason_List',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'system.lookups',
     query: 'SELECT Reason_ID, Reason_Description FROM dbo.Reason_List ORDER BY Reason_ID',
     columns: [
@@ -3196,6 +3204,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'Ration_Descriptions',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.ration_descriptions',
     query: `SELECT Ration_Code, Ration_Name, Ration_Type, Dry_Matter_Pcnt,
                    Current_Value_Kg, Date_Ration_Created, Date_Last_Modified,
@@ -3237,6 +3246,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'Ration_Calc_Constants',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.ration_calc_constants',
     query: `SELECT RationCode, RationName, BeastSex, MinNEM_Power_Raised,
                    MinNEm_Constant, Consumpt_Avg_Constant, Consumpt_Max_Constant,
@@ -3258,6 +3268,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'Ration_Load_Sizes',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.ration_load_sizes',
     query: 'SELECT Ration_Type_ID FROM dbo.Ration_Load_Sizes ORDER BY Ration_Type_ID',
     columns: [
@@ -3268,6 +3279,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'Truck_names',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.truck_names',
     query: `SELECT Truck_Number, Truck_Name, Max_Kgs_Load_Value, Last_LoadOut_Rec, Last_FeedOut_Rec
             FROM dbo.Truck_names ORDER BY Truck_Number`,
@@ -3283,6 +3295,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'Locations',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.locations',
     query: `SELECT Location_ID, Location_name, Location_Type, Commodity, Tons_stored, Value_stored, ID
             FROM dbo.Locations ORDER BY ID`,
@@ -3300,6 +3313,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'Pens_File',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'pen.pens_file',
     query: `SELECT Pen_Number_ID, Pen_Name, Mob_Name, Numb_Head, Ration_Code,
                    Kgs_Head, Feeding_System, Inc_in_Plateau_Feed, Notes, Excel_Cell,
@@ -3333,6 +3347,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'PenLaneOrder',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'pen.penlaneorder',
     query: 'SELECT Pen_Number_ID, Pen_Name, LaneOrder, Zone_number FROM dbo.PenLaneOrder ORDER BY Pen_Number_ID',
     columns: [
@@ -3346,6 +3361,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'Pen_Print_Order',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'pen.pen_print_order',
     query: 'SELECT Pen_Number_ID, Pen_name, PrintOrder FROM dbo.Pen_Print_Order ORDER BY Pen_Number_ID',
     columns: [
@@ -3358,6 +3374,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'Digistar_Users',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'digistar.digistar_users',
     query: 'SELECT User_ID, UserName, ID FROM dbo.Digistar_Users ORDER BY ID',
     columns: [
@@ -3370,6 +3387,7 @@ const mappings = [
   {
     order: 15,
     sourceTable: 'WbridgeCOMport',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.wbridgecomport',
     query: 'SELECT COMport, BaudRate, ScaleType, ID FROM dbo.WbridgeCOMport ORDER BY ID',
     columns: [
@@ -3406,6 +3424,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Ration_Recipe_Records',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.ration_recipe_records',
     query: `SELECT Ration_Code, Commodity_Code, Pcnt_of_Ration, Tolerance_Kgs,
                    Rec_Id, Loading_Seq, Liquid_Ration_Component,
@@ -3430,6 +3449,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'CommodContracts',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'commodity.commodcontracts',
     query: `SELECT Contract_No, Supplier_AC_No, Commod_Code, Start_date, End_date,
                    Price_ton, Frght_ton, Notes, Wght_contracted, Wght_delivered,
@@ -3467,6 +3487,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Period_Stocks_Closing_Balance',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'commodity.period_stocks_closing_balance',
     query: 'SELECT Commodity_Code, Commodity_Name, Stock_value, Stock_Tons_Weight FROM dbo.Period_Stocks_Closing_Balance ORDER BY Commodity_Code',
     columns: [
@@ -3480,6 +3501,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Pen_Feeding_Order_Params',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.pen_feeding_order_params',
     query: `SELECT Ration_Type, Truck_Size, [Extra_Feed_%Allowed], Feed_system_B_trigger,
                    Truck_Volume, TruckName
@@ -3497,6 +3519,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Titration_Ration_Regimes',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.titration_ration_regimes',
     query: `SELECT Titration_Regime_name, Date_defined, Start_day_Number, End_day_Number,
                    Ration_Name_Feed1, Ration_Code_Feed1, Ration_Pcnt_Feed1,
@@ -3530,6 +3553,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Pen_and_Bunk_Cleaning_Master',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.pen_and_bunk_cleaning',
     query: `SELECT Pen_name, Pen_type, Pen_ground_type, Days_between_cleaning,
                    Date_Pen_Cleaned, Days_since_pen_clean, Date_Bunk_Cleaned,
@@ -3625,6 +3649,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Commodities',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'commodity.commodities',
     query: `SELECT Commodity_Code, Commod_Name, Description, Kgs_on_hand, Value_on_hand,
                    Shrinkage_factor, Mth_Open_Value, Mth_Open_Kgs, Superceeded, ShortName,
@@ -3668,6 +3693,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'GE150_Feeding_Details',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_details',
     query: 'SELECT Feeding_Regimen_ID, Bunk_Codes_Total, Kgs_Head_Adj, Rec_ID FROM dbo.GE150_Feeding_Details ORDER BY Rec_ID',
     columns: [
@@ -3682,6 +3708,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'L150_Feeding_Details',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_details',
     query: 'SELECT Feeding_Regimen_ID, Bunk_Codes_Total, Kgs_Head_Adj, Rec_ID FROM dbo.L150_Feeding_Details ORDER BY Rec_ID',
     columns: [
@@ -3696,6 +3723,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Plateau_Feeding_Details',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_details',
     query: 'SELECT Feeding_Regimen_ID, Bunk_Codes_Total, Kgs_Head_Adj, Rec_ID FROM dbo.Plateau_Feeding_Details ORDER BY Rec_ID',
     columns: [
@@ -3710,6 +3738,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'ShortFeed_Feeding_Details',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_details',
     query: 'SELECT Feeding_Regimen_ID, Bunk_Codes_Total, Kgs_Head_Adj, Rec_ID FROM dbo.ShortFeed_Feeding_Details ORDER BY Rec_ID',
     columns: [
@@ -3724,6 +3753,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'WAGYU_Feeding_Details',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_details',
     query: 'SELECT Feeding_Regimen_ID, Bunk_Codes_Total, Kgs_Head_Adj, Rec_ID FROM dbo.WAGYU_Feeding_Details ORDER BY Rec_ID',
     columns: [
@@ -3740,6 +3770,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'GE150_Feeding_Regimens',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_regimens',
     query: 'SELECT Ration_Type, Consump_per_head_From, Consump_per_head_To, Accum_BunkCode_days, Feeding_Regimen_ID FROM dbo.GE150_Feeding_Regimens ORDER BY Feeding_Regimen_ID',
     columns: [
@@ -3755,6 +3786,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'L150_Feeding_Regimens',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_regimens',
     query: 'SELECT Ration_Type, Consump_per_head_From, Consump_per_head_To, Accum_BunkCode_days, Feeding_Regimen_ID FROM dbo.L150_Feeding_Regimens ORDER BY Feeding_Regimen_ID',
     columns: [
@@ -3770,6 +3802,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Plateau_Feeding_Regimens',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_regimens',
     query: 'SELECT Ration_Type, Consump_per_head_From, Consump_per_head_To, Accum_BunkCode_days, Feeding_Regimen_ID FROM dbo.Plateau_Feeding_Regimens ORDER BY Feeding_Regimen_ID',
     columns: [
@@ -3785,6 +3818,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'ShortFeed_Feeding_Regimens',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_regimens',
     query: 'SELECT Ration_Type, Consump_per_head_From, Consump_per_head_To, Accum_BunkCode_days, Feeding_Regimen_ID FROM dbo.ShortFeed_Feeding_Regimens ORDER BY Feeding_Regimen_ID',
     columns: [
@@ -3800,6 +3834,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'WAGYU_Feeding_Regimens',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_regimens',
     query: 'SELECT Ration_Type, Consump_per_head_From, Consump_per_head_To, Accum_BunkCode_days, Feeding_Regimen_ID FROM dbo.WAGYU_Feeding_Regimens ORDER BY Feeding_Regimen_ID',
     columns: [
@@ -3817,6 +3852,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'Date_Design_Last_Updated',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'system.system_info',
     query: 'SELECT Date_Design_Last_Updated FROM dbo.Date_Design_Last_Updated WHERE ID = 1 ORDER BY 1',
     columns: [
@@ -3827,6 +3863,7 @@ const mappings = [
   {
     order: 20,
     sourceTable: 'PensFileIsOpen',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'system.database_flags',
     query: 'SELECT Is_Open FROM dbo.PensFileIsOpen WHERE ID = 1 ORDER BY 1',
     columns: [
@@ -3841,6 +3878,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Bunk_Readings',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.bunk_readings',
     query: `SELECT Pen_Number_ID, Date_Checked, Bunk_Reading, Feed_Alloc, No_Head,
                    [PF_Kgs/Head_Change?], BK_ID, Ration_Code, Early_Bunk_Reading,
@@ -3874,6 +3912,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Dual_Ration_Feeding',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.dual_ration_feeding',
     query: `SELECT Pen_Number_ID, Feed_date, Ration_Name_Feed1, Ration_Code_Feed1,
                    Ration_Pcnt_Feed1, Ration_Name_Feed2, Ration_Code_Feed2,
@@ -3899,6 +3938,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Ration_Regimes',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.ration_regimes',
     query: `SELECT ID, Pen_ID, Feed_date, AM_Ration, AM_Ration_Code, PM_Ration, PM_Ration_Code
             FROM dbo.Ration_Regimes ORDER BY ID`,
@@ -3916,6 +3956,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Pen_Split_Rations',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.ration_regimes',
     query: `SELECT ID, Pen_ID, Feed_date, AM_Ration, AM_Ration_Code, PM_Ration, PM_Ration_Code
             FROM dbo.Pen_Split_Rations ORDER BY ID`,
@@ -3933,6 +3974,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'NSA_Bunk_Data',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.nsa_bunk_data',
     query: `SELECT TheDate, Lot_Number, Pen_name, HeadCount, MktCat, MktSubCat, Sex,
                    Avg_Current_Wght, Ration_ID, Feed_last_24_Hrs, Seven_Day_Avg,
@@ -3970,6 +4012,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Feeding_time_data',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.feeding_time_data',
     query: `SELECT ID, Feed_Date, First_pen_Fed, First_pen_Fed_time,
                    Ten_day_avg_start_time, Last_pen_Fed, Last_pen_Fed_time,
@@ -4015,6 +4058,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'PenFeedsData',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.penfeedsdata',
     query: `SELECT Feed_Date, Truck_No, Load_Numb_for_Day, Pen_Number_ID, Mob_Name,
                    Number_Cattle, Feed_Weight, Time_Fed, Load_RecID, System_User_ID,
@@ -4045,6 +4089,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Pen_Cleaning_dates',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'pen.pen_cleaning_dates',
     query: 'SELECT Pen_name, Date_cleaned, Notes, ID FROM dbo.Pen_Cleaning_dates ORDER BY ID',
     columns: [
@@ -4058,6 +4103,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Log_Pens_File',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'pen.log_pens_file',
     query: `SELECT LogID, ChangeType, ChangeDate, Pen_Number_ID, Pen_Name, Mob_Name,
                    Numb_Head, Ration_Code, Kgs_Head, Feeding_System, Inc_in_Plateau_Feed,
@@ -4093,6 +4139,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'CommodTrans',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'commodity.commodtrans',
     query: `SELECT Commodity_Code, Trans_Date, Ref_No, Contract_No, Trans_Type,
                    Value, Commod_Mast_Value, Kgs, Commod_Mast_Kgs, Reason_Code,
@@ -4123,6 +4170,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Truck_Loads',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.truck_loads',
     query: `SELECT Load_Date, Truck_No, Load_Numb_for_Day, Driver_ID, Loader_ID,
                    Load_Time, Ration_Code, Target_Load_Weight, Applied_to_Cattle,
@@ -4149,6 +4197,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'TruckLoadChangesLog',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.truckloadchangeslog',
     query: `SELECT Truck_Name, Load_date, Load_Number_For_Day, Comod_or_Pen,
                    Old_Name, Old_Weight, New_Name, New_Weight, ID
@@ -4169,6 +4218,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Truck_Load_variation_data',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.truck_load_variation_data',
     query: 'SELECT Truck_Load_RecID, Commodity_name, Actual_Weight, Target_Weight, ID FROM dbo.Truck_Load_variation_data ORDER BY ID',
     columns: [
@@ -4200,6 +4250,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'DeliveryDockets',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.deliverydockets',
     query: `SELECT Docket_Number, Docket_Date, Docket_Time, Commodity_Code, Contract_No,
                    Carrier, DriverName, Vehicle_ID, Gross_Wght, Tare_Wght, Payment_Wght,
@@ -4263,6 +4314,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'LoadDockages',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.loaddockages',
     query: `SELECT Docket_No, Reason_Code, Tons, Rate_per_Ton, Dockage_Value,
                    Dockage_Pcnt, Authorised_By, Notes, Commodity_code
@@ -4283,6 +4335,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Location_Transactions',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.location_transactions',
     query: `SELECT Trans_Date, Delivery_docket_number, From_Location_code, Commodity,
                    To_Location_code, Trans_Tons, Trans_Value, Comments,
@@ -4305,6 +4358,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Manure_carting',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.manure_carting',
     query: `SELECT Load_Date, Truck_name, [Operator], From_location, To_Location,
                    Tons_Nett_weight, Number_of_loads, Notes, ID, Manure_type
@@ -4327,6 +4381,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Manure_From_Locations',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.manure_locations',
     query: 'SELECT From_Location, ID FROM dbo.Manure_From_Locations ORDER BY ID',
     columns: [
@@ -4339,6 +4394,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Manure_To_Locations',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.manure_locations',
     query: 'SELECT To_Location, ID FROM dbo.Manure_To_Locations ORDER BY ID',
     columns: [
@@ -4351,6 +4407,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Digistar_Data_History',
+    sourceDatabase: 'CATTLE_feed',
     targetTable: 'digistar.digistar_data_history',
     query: `SELECT Truck, Done, Ingred_Pen, Trck_Mill_loaded, Load_number,
                    Commod_Pen, Ration_Name, Call_Wght, Wght_delivered, Driver_ID,
@@ -4385,6 +4442,7 @@ const mappings = [
   {
     order: 40,
     sourceTable: 'Costs_Feed_Detail',
+    sourceDatabase: 'CATTLE_Feedtrans',
     targetTable: 'finance.costs_feed_detail',
     skipBeastLookup: true,
     query: `SELECT BeastID, RevExp_Code, Date_Fed, Rev_Exp_per_Unit, Units,

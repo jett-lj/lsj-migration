@@ -44,17 +44,35 @@ function nullifyColumn(query, colName) {
   return query.replace(pattern, `NULL AS [${colName}]`);
 }
 
+/** Normalize legacy pen names for stable, case-insensitive lookup keys */
+function normalizePenName(value) {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  return trimmed.toUpperCase();
+}
+
 // ── Core runner ─────────────────────────────────────
 
 /**
  * Run the full migration.
  *
- * @param {object} mssqlPool  - connected mssql pool
+ * @param {object} mssqlPoolOrPools  - either a single connected mssql pool (legacy) or a
+ *                                     map of pools keyed by database name, e.g.
+ *                                     { CATTLE: pool, CATTLE_feed: pool, CATTLE_Feedtrans: pool }
  * @param {object} pgPool     - connected pg Pool
  * @param {object} opts       - { batchSize, logLevel, dryRun, tables }
  * @returns {{ results: Array<{ table, rowsRead, rowsWritten, rowsSkipped, rowsErrored, status, error? }> }}
  */
-async function runMigration(mssqlPool, pgPool, opts = {}) {
+async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
+  // Normalise: accept either a single pool (legacy) or a { dbName: pool } map
+  const mssqlPools = (mssqlPoolOrPools && typeof mssqlPoolOrPools.request === 'function')
+    ? { [process.env.MSSQL_DATABASE || 'CATTLE']: mssqlPoolOrPools }
+    : mssqlPoolOrPools;
+
+  // Default pool = CATTLE (used for all lookups that read from the main cattle tables)
+  const defaultDb = process.env.MSSQL_DATABASE || 'CATTLE';
+  const mssqlPool = mssqlPools[defaultDb] || Object.values(mssqlPools)[0];
   const {
     batchSize = 500,
     logLevel  = 'info',
@@ -106,9 +124,11 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
 
     // Run tables at the same order level in parallel
     const groupResults = await Promise.all(
-      group.map(mapping =>
-        migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun, lookups })
-      )
+      group.map(mapping => {
+        const srcDb = mapping.sourceDatabase || defaultDb;
+        const srcPool = mssqlPools[srcDb] || mssqlPool;
+        return migrateTable(srcPool, pgPool, mapping, { batchSize, log, dryRun, lookups });
+      })
     );
     results.push(...groupResults);
 
@@ -184,33 +204,58 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
       } else {
         const res = await pgPool.query('SELECT pen_number_id, pen_name FROM pen.pens_file WHERE pen_name IS NOT NULL');
         lookups.penNameToIdMap = {};
+
+        const addPenLookup = (penName, penId) => {
+          const key = normalizePenName(penName);
+          if (!key || penId === null || penId === undefined) return;
+          lookups.penNameToIdMap[key] = penId;
+        };
+
         for (const row of res.rows) {
-          lookups.penNameToIdMap[row.pen_name.toUpperCase()] = row.pen_number_id;
+          addPenLookup(row.pen_name, row.pen_number_id);
         }
-        // Auto-seed pens from Cattle.Pen_Number when source has no Pens_File table
-        if (Object.keys(lookups.penNameToIdMap).length === 0) {
-          try {
-            const srcPens = await mssqlPool.request().query(
-              `SELECT DISTINCT LTRIM(RTRIM(Pen_Number)) AS pen_name
-               FROM dbo.Cattle
-               WHERE Pen_Number IS NOT NULL AND LTRIM(RTRIM(Pen_Number)) != ''
-               ORDER BY 1`
-            );
-            if (srcPens.recordset.length > 0) {
-              log.info(`  pen.pens_file empty — auto-seeding ${srcPens.recordset.length} pens from Cattle.Pen_Number`);
-              for (const { pen_name } of srcPens.recordset) {
+
+        // Ensure all distinct legacy Cattle.Pen_Number values can resolve to a pen_number_id.
+        try {
+          const srcPens = await mssqlPool.request().query(
+            `SELECT DISTINCT LTRIM(RTRIM(Pen_Number)) AS pen_name
+             FROM dbo.Cattle
+             WHERE Pen_Number IS NOT NULL AND LTRIM(RTRIM(Pen_Number)) != ''
+             ORDER BY 1`
+          );
+
+          if (srcPens.recordset.length > 0) {
+            const missingPens = srcPens.recordset
+              .map(({ pen_name }) => String(pen_name || '').trim())
+              .filter((penName) => {
+                const key = normalizePenName(penName);
+                return key && lookups.penNameToIdMap[key] === undefined;
+              });
+
+            if (missingPens.length > 0) {
+              log.info(`  Auto-seeding ${missingPens.length} missing pens from Cattle.Pen_Number`);
+              for (const penName of missingPens) {
                 const ins = await pgPool.query(
                   'INSERT INTO pen.pens_file (pen_name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING pen_number_id',
-                  [pen_name]
+                  [penName]
                 );
+
                 if (ins.rows.length > 0) {
-                  lookups.penNameToIdMap[pen_name.toUpperCase()] = ins.rows[0].pen_number_id;
+                  addPenLookup(penName, ins.rows[0].pen_number_id);
+                } else {
+                  const existing = await pgPool.query(
+                    'SELECT pen_number_id FROM pen.pens_file WHERE UPPER(BTRIM(pen_name)) = UPPER(BTRIM($1)) LIMIT 1',
+                    [penName]
+                  );
+                  if (existing.rows.length > 0) {
+                    addPenLookup(penName, existing.rows[0].pen_number_id);
+                  }
                 }
               }
             }
-          } catch (err) {
-            log.warn(`  Auto-seed pens failed: ${err.message}`);
           }
+        } catch (err) {
+          log.warn(`  Auto-seed missing pens failed: ${err.message}`);
         }
       }
       log.info(`  Built penNameToIdMap: ${Object.keys(lookups.penNameToIdMap).length} entries`);
@@ -230,8 +275,10 @@ async function runMigration(mssqlPool, pgPool, opts = {}) {
   }
 
   // Expand normalized child tables (unpivot columnar data → rows)
+  // Both source tables (Ration_Load_Sizes, Pen_Feeding_Order_Params) live in CATTLE_feed
   if (!dryRun) {
-    await expandNormalizedChildren(mssqlPool, pgPool, log);
+    const feedPool = mssqlPools['CATTLE_feed'] || mssqlPool;
+    await expandNormalizedChildren(feedPool, pgPool, log);
   }
 
   log.info('Migration complete.');

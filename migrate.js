@@ -23,6 +23,7 @@ const { connectMssql, connectPostgres, closePools } = require('./connections');
 const { runMigration, validateMigration, preFlightAudit, migrateRawTables, reconciliationReport } = require('./runner');
 const { getMssqlConfig, getMigrationOptions } = require('./config');
 const { getCategorySummary } = require('./categories');
+const sql  = require('mssql');
 const fs   = require('fs');
 const path = require('path');
 
@@ -249,9 +250,25 @@ async function main() {
 
   console.log('=== LSJ-HUB Legacy Migration Tool ===\n');
 
-  // Connect
+  // Connect to primary CATTLE database
   const mssqlPool = await connectMssql();
-  console.log('[INFO] Connected to SQL Server.');
+  console.log('[INFO] Connected to SQL Server (CATTLE).');
+
+  // Also connect to CATTLE_feed and CATTLE_Feedtrans if available
+  const defaultDb = process.env.MSSQL_DATABASE || 'CATTLE';
+  const mssqlPools = { [defaultDb]: mssqlPool };
+  const extraPools = [];
+  for (const feedDb of ['CATTLE_feed', 'CATTLE_Feedtrans']) {
+    try {
+      const cfg = { ...getMssqlConfig(), database: feedDb };
+      const feedPool = await new sql.ConnectionPool(cfg).connect();
+      mssqlPools[feedDb] = feedPool;
+      extraPools.push(feedPool);
+      console.log(`[INFO] Connected to SQL Server (${feedDb}).`);
+    } catch (err) {
+      console.log(`[INFO] ${feedDb} not available — its tables will be skipped.`);
+    }
+  }
 
   const pgPool = connectPostgres(pgConfig());
   // Verify PG connection
@@ -347,7 +364,7 @@ async function main() {
     await dropAllForeignKeys(pgPool);
   }
 
-  const { results } = await runMigration(mssqlPool, pgPool, opts);
+  const { results } = await runMigration(mssqlPools, pgPool, opts);
 
   // Migrate raw tables (legacy_raw JSONB catch-all)
   let rawResults = [];
@@ -427,6 +444,10 @@ async function main() {
   }
 
   await closePools();
+  // Close extra feed DB pools
+  for (const p of extraPools) {
+    try { await p.close(); } catch (_) {}
+  }
   console.log('\nDone.');
   process.exit(hasFailures ? 1 : 0);
 }
