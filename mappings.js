@@ -553,7 +553,7 @@ const mappings = [
       // Derive status from legacy flags (Died, Sale_Date, Date_Archived)
       row.status = deriveCowStatus(rawRow);
 
-      // Resolve pen_id from Pen_Number → pen.pens_file.pen_name (case-insensitive)
+      // Resolve pen_id from Pen_Number → pen.pens.name (case-insensitive)
       const penName = trimOrNull(rawRow.Pen_Number);
       if (penName && lookups.penNameToIdMap) {
         row.pen_id = lookups.penNameToIdMap[penName.toUpperCase()] || null;
@@ -3314,7 +3314,10 @@ const mappings = [
     order: 15,
     sourceTable: 'Pens_File',
     sourceDatabase: 'CATTLE_feed',
-    targetTable: 'pen.pens_file',
+    targetTable: 'pen.pens',
+    // IMPORTANT: id = legacy Pen_Number_ID so all migrated child FKs (cows.pen_id,
+    // ration_regimes.pen_id, bunk_readings.pen_number_id, etc.) remain valid.
+    // After migration, runner.js bumps pen.pens_id_seq to MAX(id).
     query: `SELECT Pen_Number_ID, Pen_Name, Mob_Name, Numb_Head, Ration_Code,
                    Kgs_Head, Feeding_System, Inc_in_Plateau_Feed, Notes, Excel_Cell,
                    DateEnteredFeedlot, Bunk_Volume, IsPaddock, Expected_WG_Day,
@@ -3322,21 +3325,21 @@ const mappings = [
                    Titration_Regime, Titration_Regime_Start_date
             FROM dbo.Pens_File ORDER BY Pen_Number_ID`,
     columns: [
-      { source: 'Pen_Number_ID',                 target: 'pen_number_id' },
-      { source: 'Pen_Name',                      target: 'pen_name',                      transform: trimOrNull },
+      { source: 'Pen_Number_ID',                 target: 'id' },
+      { source: 'Pen_Name',                      target: 'name',                          transform: trimOrNull },
       { source: 'Mob_Name',                      target: 'mob_name',                      transform: trimOrNull },
-      { source: 'Numb_Head',                     target: 'numb_head',                     transform: toNum },
-      { source: 'Ration_Code',                   target: 'ration_code',                   transform: toNum },
+      { source: 'Numb_Head',                     target: 'current_head',                  transform: toNum },
+      { source: 'Ration_Code',                   target: 'current_ration_code',           transform: toNum },
       { source: 'Kgs_Head',                      target: 'kgs_head',                      transform: toNum },
       { source: 'Feeding_System',                target: 'feeding_system',                transform: toNum },
       { source: 'Inc_in_Plateau_Feed',           target: 'inc_in_plateau_feed',           transform: toBool },
       { source: 'Notes',                         target: 'notes',                         transform: trimOrNull },
       { source: 'Excel_Cell',                    target: 'excel_cell',                    transform: trimOrNull },
-      { source: 'DateEnteredFeedlot',            target: 'dateenteredfeedlot',            transform: toDate },
+      { source: 'DateEnteredFeedlot',            target: 'date_entered_feedlot',          transform: toDate },
       { source: 'Bunk_Volume',                   target: 'bunk_volume',                   transform: toNum },
-      { source: 'IsPaddock',                     target: 'ispaddock',                     transform: toBool },
+      { source: 'IsPaddock',                     target: 'is_paddock',                    transform: toBool },
       { source: 'Expected_WG_Day',               target: 'expected_wg_day',               transform: toNum },
-      { source: 'Date_last_cleaned',             target: 'date_last_cleaned',             transform: trimOrNull },
+      { source: 'Date_last_cleaned',             target: 'date_last_cleaned',             transform: toDate },
       { source: 'Ration_Code_PM',                target: 'ration_code_pm',                transform: toNum },
       { source: 'Exclude_from_feed_generation',  target: 'exclude_from_feed_generation',  transform: toBool },
       { source: 'Titration_Regime',              target: 'titration_regime',              transform: trimOrNull },

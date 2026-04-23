@@ -244,7 +244,7 @@ const TABLE_CATEGORIES = {
   'Pen_Cleaning_dates': { strategy: 'mapped', target: 'pen.pen_cleaning_dates' },
   'Pen_Print_Order':    { strategy: 'mapped', target: 'pen.pen_print_order' },
   'PenLaneOrder':       { strategy: 'mapped', target: 'pen.penlaneorder' },
-  'Pens_File':          { strategy: 'mapped', target: 'pen.pens_file' },
+  'Pens_File':          { strategy: 'mapped', target: 'pen.pens' },
 
   // ══════════════════════════════════════════════════════
   // ──  Commodity domain  ───────────────────────────────

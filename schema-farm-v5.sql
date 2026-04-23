@@ -1479,43 +1479,54 @@ CREATE TABLE IF NOT EXISTS feed.cattle_feed_updates (
 -- ██  Pens, pen history, pen riders, lane orders
 -- ████████████████████████████████████████████████████████████████
 
--- pens_file (V2: 17 clients — master pen list; OG alias: pens)
-CREATE TABLE IF NOT EXISTS pen.pens_file (
-  pen_number_id    SERIAL PRIMARY KEY,
-  pen_name         TEXT NOT NULL,
-  pen_type         TEXT,
-  capacity         INTEGER,
-  area_sqm         NUMERIC(10,2),
-  bunk_length      NUMERIC(10,2),
-  mob_name         TEXT,
-  current_head     INTEGER DEFAULT 0,
-  current_ration_code SMALLINT,
-  hospital_pen     BOOLEAN DEFAULT FALSE,
-  buller_pen       BOOLEAN DEFAULT FALSE,
-  receiving_pen    BOOLEAN DEFAULT FALSE,
-  active           BOOLEAN DEFAULT TRUE,
-  notes            TEXT,
-  legacy_modified_at TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_pen_name ON pen.pens_file(pen_name);
-
--- pens (OG web-app — master pen list used by routes/services)
+-- pens (UNIFIED — merges V2 pens_file + OG pens into single master pen table)
+-- Migration assigns id = legacy Pen_Number_ID so all migrated child FKs (cows.pen_id,
+-- ration_regimes.pen_id, bunk_readings.pen_number_id, etc.) remain valid.
+-- After migration: SELECT setval('pen.pens_id_seq', COALESCE(MAX(id),0)) FROM pen.pens;
 CREATE TABLE IF NOT EXISTS pen.pens (
-  id          SERIAL PRIMARY KEY,
-  name        TEXT NOT NULL UNIQUE,
-  is_paddock  BOOLEAN DEFAULT FALSE,
-  is_hospital BOOLEAN DEFAULT FALSE,
-  capacity    INTEGER,
-  ration_id   INTEGER,   -- FK deferred (→ feed.rations)
-  active          BOOLEAN DEFAULT TRUE,
-  include_in_list BOOLEAN DEFAULT TRUE,
-  exit_pen        TEXT,
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ
+  id                            SERIAL PRIMARY KEY,
+  name                          TEXT NOT NULL UNIQUE,
+  -- Type / classification
+  pen_type                      TEXT,
+  is_paddock                    BOOLEAN DEFAULT FALSE,
+  is_hospital                   BOOLEAN DEFAULT FALSE,
+  buller_pen                    BOOLEAN DEFAULT FALSE,
+  receiving_pen                 BOOLEAN DEFAULT FALSE,
+  -- Capacity & physical
+  capacity                      INTEGER,
+  area_sqm                      NUMERIC(10,2),
+  bunk_length                   NUMERIC(10,2),
+  bunk_volume                   NUMERIC(10,2),
+  -- Current state
+  mob_name                      TEXT,
+  current_head                  INTEGER DEFAULT 0,
+  -- Ration
+  ration_id                     INTEGER,           -- OG FK (→ feed.rations)
+  current_ration_code           SMALLINT,          -- V2 legacy ration code
+  ration_code_pm                SMALLINT,          -- V2 PM ration
+  kgs_head                      NUMERIC(10,2),
+  feeding_system                SMALLINT,
+  inc_in_plateau_feed           BOOLEAN DEFAULT FALSE,
+  exclude_from_feed_generation  BOOLEAN DEFAULT FALSE,
+  expected_wg_day               NUMERIC(10,2),
+  -- Cleaning / titration
+  date_last_cleaned             DATE,
+  titration_regime              TEXT,
+  titration_regime_start_date   DATE,
+  date_entered_feedlot          DATE,
+  -- Display / list config
+  active                        BOOLEAN DEFAULT TRUE,
+  include_in_list               BOOLEAN DEFAULT TRUE,
+  exit_pen                      TEXT,
+  excel_cell                    TEXT,
+  notes                         TEXT,
+  -- Audit / legacy
+  legacy_modified_at            TIMESTAMPTZ,
+  created_at                    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at                    TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS idx_og_pens_ration ON pen.pens(ration_id);
+CREATE INDEX IF NOT EXISTS idx_pens_name ON pen.pens(name);
+CREATE INDEX IF NOT EXISTS idx_pens_ration ON pen.pens(ration_id);
 
 -- penshistory (V2: 17 clients — pen movement history)
 CREATE TABLE IF NOT EXISTS pen.penshistory (
@@ -1565,7 +1576,7 @@ CREATE INDEX IF NOT EXISTS idx_pensfed_date ON pen.pensfed(feeddate);
 CREATE TABLE IF NOT EXISTS pen.penlaneorder (
   id             SERIAL PRIMARY KEY,
   variant        TEXT NOT NULL DEFAULT 'standard',  -- standard, gl
-  pen_number_id  INTEGER REFERENCES pen.pens_file(pen_number_id),
+  pen_number_id  INTEGER REFERENCES pen.pens(id),
   lane_order     INTEGER,
   ration_type    SMALLINT,
   created_at     TIMESTAMPTZ DEFAULT NOW(),
@@ -1599,7 +1610,7 @@ CREATE TABLE IF NOT EXISTS pen.pen_rider_tolerances (
 -- pen_cleaning_dates (V2: 11 clients)
 CREATE TABLE IF NOT EXISTS pen.pen_cleaning_dates (
   id           SERIAL PRIMARY KEY,
-  pen_id       INTEGER REFERENCES pen.pens_file(pen_number_id),
+  pen_id       INTEGER REFERENCES pen.pens(id),
   clean_date   DATE NOT NULL,
   clean_type   TEXT,
   notes        TEXT,
@@ -1610,7 +1621,7 @@ CREATE TABLE IF NOT EXISTS pen.pen_cleaning_dates (
 -- pen_print_order (V2: 15 clients)
 CREATE TABLE IF NOT EXISTS pen.pen_print_order (
   id            SERIAL PRIMARY KEY,
-  pen_number_id INTEGER REFERENCES pen.pens_file(pen_number_id),
+  pen_number_id INTEGER REFERENCES pen.pens(id),
   print_order   INTEGER,
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   updated_at    TIMESTAMPTZ
@@ -4381,21 +4392,8 @@ ALTER TABLE pen.pen_rider_tolerances ADD COLUMN IF NOT EXISTS treat_success_tota
 ALTER TABLE pen.penlaneorder ADD COLUMN IF NOT EXISTS laneorder SMALLINT NULL;
 ALTER TABLE pen.penlaneorder ADD COLUMN IF NOT EXISTS pen_name VARCHAR(10);
 ALTER TABLE pen.penlaneorder ADD COLUMN IF NOT EXISTS zone_number SMALLINT NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS bunk_volume REAL NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS date_last_cleaned DATE NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS dateenteredfeedlot TIMESTAMPTZ NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS excel_cell VARCHAR(5) NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS exclude_from_feed_generation BOOLEAN NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS expected_wg_day REAL NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS feeding_system SMALLINT NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS inc_in_plateau_feed BOOLEAN DEFAULT FALSE;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS ispaddock BOOLEAN NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS kgs_head REAL NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS numb_head SMALLINT;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS ration_code INTEGER NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS ration_code_pm SMALLINT NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS titration_regime VARCHAR(15) NULL;
-ALTER TABLE pen.pens_file ADD COLUMN IF NOT EXISTS titration_regime_start_date TIMESTAMPTZ NULL;
+-- pen.pens_file ALTER block removed: table merged into pen.pens (all columns
+-- declared inline in the unified CREATE TABLE pen.pens above).
 ALTER TABLE pen.pensfed ADD COLUMN IF NOT EXISTS feed_date DATE;
 ALTER TABLE pen.pensfed ADD COLUMN IF NOT EXISTS last_modified_timestamp TIMESTAMPTZ NULL;
 ALTER TABLE pen.penshistory ADD COLUMN IF NOT EXISTS beastid INTEGER;
@@ -4715,7 +4713,7 @@ DECLARE
     _fks TEXT[][] := ARRAY[
         -- cattle → pen, purchasing, contacts
         ARRAY['fk_gps_cow',               'ALTER TABLE cattle.gps_locations ADD CONSTRAINT fk_gps_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE CASCADE'],
-        ARRAY['fk_cows_pen',              'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_pen FOREIGN KEY (pen_id) REFERENCES pen.pens_file(pen_number_id) ON DELETE SET NULL'],
+        ARRAY['fk_cows_pen',              'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_purchase_lot',     'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_purchase_lot FOREIGN KEY (purchase_lot_id) REFERENCES purchasing.purchase_lots(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_program_id',       'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_program_id FOREIGN KEY (program_id) REFERENCES cattle.cattle_program_types(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_vendor',           'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_vendor FOREIGN KEY (vendor_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
@@ -4741,13 +4739,13 @@ DECLARE
         ARRAY['fk_drugs_purchased_drug',  'ALTER TABLE health.drugs_purchased ADD CONSTRAINT fk_drugs_purchased_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(drug_id) ON DELETE RESTRICT'],
         ARRAY['fk_inv_line_drug',         'ALTER TABLE health.drug_inventory_line_items ADD CONSTRAINT fk_inv_line_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(drug_id) ON DELETE RESTRICT'],
         -- feed → pen, commodity, cattle, contacts
-        ARRAY['fk_bunk_pen',              'ALTER TABLE feed.bunk_readings ADD CONSTRAINT fk_bunk_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens_file(pen_number_id) ON DELETE SET NULL'],
+        ARRAY['fk_bunk_pen',              'ALTER TABLE feed.bunk_readings ADD CONSTRAINT fk_bunk_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_bunk_ration',           'ALTER TABLE feed.bunk_readings ADD CONSTRAINT fk_bunk_ration FOREIGN KEY (ration_code) REFERENCES feed.ration_descriptions(ration_code) ON DELETE SET NULL'],
-        ARRAY['fk_ration_regime_pen',     'ALTER TABLE feed.ration_regimes ADD CONSTRAINT fk_ration_regime_pen FOREIGN KEY (pen_id) REFERENCES pen.pens_file(pen_number_id) ON DELETE SET NULL'],
+        ARRAY['fk_ration_regime_pen',     'ALTER TABLE feed.ration_regimes ADD CONSTRAINT fk_ration_regime_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_paddock_feed_commodity','ALTER TABLE feed.paddock_feeding ADD CONSTRAINT fk_paddock_feed_commodity FOREIGN KEY (commodity_id) REFERENCES commodity.commodities(commodity_code) ON DELETE RESTRICT'],
         ARRAY['fk_paddock_feed_cow',      'ALTER TABLE feed.paddock_feeding ADD CONSTRAINT fk_paddock_feed_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_cattle_feed_updates_cow','ALTER TABLE feed.cattle_feed_updates ADD CONSTRAINT fk_cattle_feed_updates_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
-        ARRAY['fk_penfeedsdata_pen',      'ALTER TABLE feed.penfeedsdata ADD CONSTRAINT fk_penfeedsdata_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens_file(pen_number_id) ON DELETE RESTRICT'],
+        ARRAY['fk_penfeedsdata_pen',      'ALTER TABLE feed.penfeedsdata ADD CONSTRAINT fk_penfeedsdata_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE RESTRICT'],
         ARRAY['fk_penfeedsdata_ration',   'ALTER TABLE feed.penfeedsdata ADD CONSTRAINT fk_penfeedsdata_ration FOREIGN KEY (ration_code) REFERENCES feed.ration_descriptions(ration_code) ON DELETE SET NULL'],
         ARRAY['fk_vendor_decl_owner',     'ALTER TABLE feed.vendor_declarations ADD CONSTRAINT fk_vendor_decl_owner FOREIGN KEY (owner_contact_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         -- pen → cattle, feed
@@ -4813,7 +4811,15 @@ DECLARE
         ARRAY['fk_carcase_dt2_cow',       'ALTER TABLE carcase.carcase_datatype2 ADD CONSTRAINT fk_carcase_dt2_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_carc_feedback_cow',     'ALTER TABLE carcase.carcase_feedback_report_data ADD CONSTRAINT fk_carc_feedback_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_cattle_qry_report_cow', 'ALTER TABLE reporting.cattle_query_month_report ADD CONSTRAINT fk_cattle_qry_report_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
-        ARRAY['fk_dispatch_item_cow',     'ALTER TABLE operations.transport_dispatch_items ADD CONSTRAINT fk_dispatch_item_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT']
+        ARRAY['fk_dispatch_item_cow',     'ALTER TABLE operations.transport_dispatch_items ADD CONSTRAINT fk_dispatch_item_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
+        -- pen_id FKs for previously orphaned columns — all → pen.pens(id) (unified table)
+        ARRAY['fk_dual_ration_pen',       'ALTER TABLE feed.dual_ration_feeding ADD CONSTRAINT fk_dual_ration_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_titration_regime_pen',  'ALTER TABLE feed.titration_ration_regimes ADD CONSTRAINT fk_titration_regime_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_pen_bunk_cleaning_pen', 'ALTER TABLE feed.pen_and_bunk_cleaning ADD CONSTRAINT fk_pen_bunk_cleaning_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_nsa_bunk_pen',          'ALTER TABLE feed.nsa_bunk_data ADD CONSTRAINT fk_nsa_bunk_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        -- OG web-app tables → pen.pens(id)
+        ARRAY['fk_pen_snapshots_pen',     'ALTER TABLE cattle.pen_list_snapshots ADD CONSTRAINT fk_pen_snapshots_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE CASCADE'],
+        ARRAY['fk_bunk_call_entry_pen',   'ALTER TABLE operations.bunk_call_entries ADD CONSTRAINT fk_bunk_call_entry_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL']
     ];
     _i INT;
 BEGIN
@@ -4898,7 +4904,12 @@ CREATE OR REPLACE VIEW legacy.costs               AS SELECT * FROM finance.costs
 
 -- V2 legacy name aliases (for ETL scripts using V2 table names)
 CREATE OR REPLACE VIEW legacy.cattle              AS SELECT * FROM cattle.cows;
-CREATE OR REPLACE VIEW legacy.pens_file           AS SELECT * FROM pen.pens_file;
+CREATE OR REPLACE VIEW legacy.pens_file           AS
+  SELECT id AS pen_number_id, name AS pen_name, pen_type, capacity, area_sqm,
+         bunk_length, mob_name, current_head, current_ration_code,
+         is_hospital AS hospital_pen, buller_pen, receiving_pen, active, notes,
+         legacy_modified_at, created_at, updated_at
+  FROM pen.pens;
 CREATE OR REPLACE VIEW legacy.penshistory         AS SELECT * FROM pen.penshistory;
 CREATE OR REPLACE VIEW legacy.pensfed             AS SELECT * FROM pen.pensfed;
 CREATE OR REPLACE VIEW legacy.sick_beast_records  AS SELECT * FROM health.sick_beast_records;
@@ -5003,7 +5014,7 @@ DECLARE
     'feed.paddock_feeding', 'feed.nsa_bunk_data',
     'feed.vendor_declarations', 'feed.pending_feed_data', 'feed.cattle_feed_updates',
     -- pen
-    'pen.pens_file', 'pen.pens', 'pen.penshistory', 'pen.pen_movements',
+    'pen.pens', 'pen.penshistory', 'pen.pen_movements',
     'pen.pensfed', 'pen.penlaneorder', 'pen.penriders_log',
     'pen.pen_rider_tolerances', 'pen.pen_cleaning_dates', 'pen.pen_print_order',
     -- finance
@@ -5085,7 +5096,8 @@ $$;
 -- ████████████████████████████████████████████████████████████████
 --
 -- DUPLICATE TABLE PAIRS (OG web-app vs V2 legacy — both exist intentionally):
---   pen.pens (OG — web-app uses this)  vs  pen.pens_file (V2 — legacy migration target)
+--   pen.pens — UNIFIED (V2 pens_file + OG pens merged into single table; legacy
+--              view legacy.pens_file aliases columns for any V2 ETL scripts)
 --   health.drug_purchases (OG)         vs  health.drugs_purchased (V2)
 --   health.drug_purchase_events (OG)   vs  health.drugs_purchase_event (V2)
 --   weighing.livestock_weighbridge_dockets (OG) vs operations.weighbridge_dockets (V2)

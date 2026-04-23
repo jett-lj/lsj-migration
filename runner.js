@@ -147,6 +147,42 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
         }
       }
       log.info(`  Built beastIdMap: ${Object.keys(lookups.beastIdMap).length} entries`);
+
+      // Backfill any orphan pen_id on active cows. Despite the streaming row-level
+      // resolver in mappings.js, a small number of cows reliably end up with NULL
+      // pen_id (root cause not yet identified — possibly a race with auto-seeded
+      // pens). This sweep uses the same source-of-truth ranking query and resolves
+      // them via lookups.penNameToIdMap. Orphans with empty source Pen_Number are
+      // left as NULL (genuine data gap).
+      if (!dryRun && lookups.penNameToIdMap) {
+        const orphans = await pgPool.query(`
+          SELECT id, legacy_beast_id FROM cattle.cows
+          WHERE pen_id IS NULL AND status = 'active' AND legacy_beast_id IS NOT NULL
+        `);
+        if (orphans.rows.length > 0) {
+          const beastIds = orphans.rows.map(r => r.legacy_beast_id);
+          const srcRows = await mssqlPool.request().query(`
+            WITH ranked AS (
+              SELECT BeastID, LTRIM(RTRIM(Pen_Number)) AS pen_name,
+                     ROW_NUMBER() OVER (PARTITION BY BeastID
+                       ORDER BY Feedlot_Entry_Date DESC, Start_Date DESC) AS rn
+              FROM dbo.Cattle WHERE BeastID IN (${beastIds.join(',')})
+            ) SELECT BeastID, pen_name FROM ranked WHERE rn = 1
+          `);
+          const beastToPen = new Map();
+          for (const r of srcRows.recordset) beastToPen.set(r.BeastID, r.pen_name);
+          let fixed = 0, empty = 0, nomatch = 0;
+          for (const cow of orphans.rows) {
+            const penName = beastToPen.get(cow.legacy_beast_id);
+            if (!penName) { empty++; continue; }
+            const penId = lookups.penNameToIdMap[normalizePenName(penName)];
+            if (!penId) { nomatch++; continue; }
+            await pgPool.query('UPDATE cattle.cows SET pen_id = $1 WHERE id = $2', [penId, cow.id]);
+            fixed++;
+          }
+          log.info(`  Backfilled orphan pen_id: ${fixed} fixed, ${empty} empty source, ${nomatch} unmatched (of ${orphans.rows.length} orphans)`);
+        }
+      }
     }
     if (tables.has('contacts.contacts')) {
       if (dryRun) {
@@ -198,11 +234,11 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
       }
       log.info(`  Built breedIdMap: ${Object.keys(lookups.breedIdMap).length} entries`);
     }
-    if (tables.has('pen.pens_file')) {
+    if (tables.has('pen.pens')) {
       if (dryRun) {
         lookups.penNameToIdMap = {};
       } else {
-        const res = await pgPool.query('SELECT pen_number_id, pen_name FROM pen.pens_file WHERE pen_name IS NOT NULL');
+        const res = await pgPool.query('SELECT id, name FROM pen.pens WHERE name IS NOT NULL');
         lookups.penNameToIdMap = {};
 
         const addPenLookup = (penName, penId) => {
@@ -212,16 +248,23 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
         };
 
         for (const row of res.rows) {
-          addPenLookup(row.pen_name, row.pen_number_id);
+          addPenLookup(row.name, row.id);
         }
 
-        // Ensure all distinct legacy Cattle.Pen_Number values can resolve to a pen_number_id.
+        // Ensure all distinct legacy Cattle.Pen_Number values can resolve to a pen id.
         try {
           const srcPens = await mssqlPool.request().query(
             `SELECT DISTINCT LTRIM(RTRIM(Pen_Number)) AS pen_name
              FROM dbo.Cattle
              WHERE Pen_Number IS NOT NULL AND LTRIM(RTRIM(Pen_Number)) != ''
              ORDER BY 1`
+          );
+
+          // Bump the SERIAL sequence past any explicit ids inserted from legacy Pen_Number_ID
+          // BEFORE auto-seed inserts, otherwise new inserts collide on PK and get
+          // silently swallowed by ON CONFLICT DO NOTHING.
+          await pgPool.query(
+            "SELECT setval('pen.pens_id_seq', COALESCE((SELECT MAX(id) FROM pen.pens), 0) + 1, false)"
           );
 
           if (srcPens.recordset.length > 0) {
@@ -233,23 +276,21 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
               });
 
             if (missingPens.length > 0) {
-              log.info(`  Auto-seeding ${missingPens.length} missing pens from Cattle.Pen_Number`);
+              // Pens referenced by Cattle but absent from Pens_File (the feedlot
+              // registry) are paddocks by definition — Andrew confirmed Barmount
+              // backgrounds cattle on paddocks (in_feedlot=false) before they enter
+              // the feedlot pens.
+              log.info(`  Auto-seeding ${missingPens.length} missing pens from Cattle.Pen_Number (flagged as paddocks)`);
               for (const penName of missingPens) {
                 const ins = await pgPool.query(
-                  'INSERT INTO pen.pens_file (pen_name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING pen_number_id',
+                  `INSERT INTO pen.pens (name, is_paddock, pen_type)
+                   VALUES ($1, true, 'paddock')
+                   ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+                   RETURNING id`,
                   [penName]
                 );
-
                 if (ins.rows.length > 0) {
-                  addPenLookup(penName, ins.rows[0].pen_number_id);
-                } else {
-                  const existing = await pgPool.query(
-                    'SELECT pen_number_id FROM pen.pens_file WHERE UPPER(BTRIM(pen_name)) = UPPER(BTRIM($1)) LIMIT 1',
-                    [penName]
-                  );
-                  if (existing.rows.length > 0) {
-                    addPenLookup(penName, existing.rows[0].pen_number_id);
-                  }
+                  addPenLookup(penName, ins.rows[0].id);
                 }
               }
             }
@@ -1485,7 +1526,7 @@ const COMPARE_DEFS = [
     ],
   },
   {
-    sourceTable: 'FeedDB_Pens_File', targetTable: 'pen.pens_file',
+    sourceTable: 'FeedDB_Pens_File', targetTable: 'feed.feeddb_pens_file',
     sourceKey: 'Pen_name', targetKey: 'pen_name',
     compareCols: [],
   },

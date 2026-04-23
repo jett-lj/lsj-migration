@@ -2,9 +2,11 @@
 -- seed.sql — Post-migration seed data for v5 tables with no legacy source
 --
 -- Run AFTER migration completes.  Populates:
---   1. pen.pens        — cloned from migrated pen.pens_file rows
---   2. health.body_systems — cloned from system.lookups (category='body_system')
---   3. weighing.scalestypes — common Australian feedlot scale types
+--   1. health.body_systems — cloned from system.lookups (category='body_system')
+--   2. weighing.scalestypes — common Australian feedlot scale types
+--
+-- NOTE: pen.pens is now populated DIRECTLY by the migration (Pens_File mapping
+-- inserts with id = legacy Pen_Number_ID). No clone step required.
 --
 -- Tables intentionally LEFT EMPTY (OG web-app only, no legacy data):
 --   operations.bunk_call_sessions, bunk_call_entries, rfid_scan_sessions,
@@ -24,23 +26,7 @@
 
 BEGIN;
 
--- ── 1. pen.pens — seed from migrated pen.pens_file ──────────────────
--- The OG web app uses pen.pens; the legacy migration populates pen.pens_file.
--- Clone across so the web app has pen data on day one.
-INSERT INTO pen.pens (name, is_paddock, is_hospital, capacity, active, include_in_list, exit_pen)
-SELECT
-  pf.pen_name,
-  COALESCE(pf.ispaddock, FALSE),
-  FALSE,                          -- is_hospital not tracked in legacy
-  pf.pen_capacity,
-  TRUE,
-  COALESCE(pf.include_in_pen_list, TRUE),
-  pf.current_exit_pen
-FROM pen.pens_file pf
-WHERE pf.pen_name IS NOT NULL
-ON CONFLICT (name) DO NOTHING;
-
--- ── 2. health.body_systems — seed from system.lookups ────────────────
+-- ── 1. health.body_systems — seed from system.lookups ────────────────
 -- Legacy BodySystems data was migrated into system.lookups (category='body_system').
 -- The OG health module expects rows in health.body_systems.
 INSERT INTO health.body_systems (bs_id, body_system)
@@ -52,7 +38,7 @@ WHERE category = 'body_system'
   AND name IS NOT NULL
 ON CONFLICT (body_system) DO NOTHING;
 
--- ── 3. weighing.scalestypes — common scale types ─────────────────────
+-- ── 2. weighing.scalestypes — common scale types ─────────────────────
 -- Legacy ScalesTypes was excluded (serial protocol details).
 -- Seed with known scale type names used across AU feedlots.
 INSERT INTO weighing.scalestypes (scale_type, description) VALUES
