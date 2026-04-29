@@ -20,7 +20,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const { connectMssql, connectPostgres, closePools } = require('./connections');
-const { runMigration, validateMigration, preFlightAudit, migrateRawTables, reconciliationReport } = require('./runner');
+const { runMigration, validateMigration, validateMappings, preFlightAudit, migrateRawTables, reconciliationReport } = require('./runner');
 const { getMssqlConfig, getMigrationOptions } = require('./config');
 const { getCategorySummary } = require('./categories');
 const sql  = require('mssql');
@@ -30,7 +30,7 @@ const path = require('path');
 // ── Parse CLI args ──────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { dryRun: false, tables: null, validateOnly: false, auditOnly: false, reconcileOnly: false, batchSize: null };
+  const args = { dryRun: false, tables: null, validateOnly: false, auditOnly: false, reconcileOnly: false, checkMappings: false, batchSize: null };
 
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
@@ -38,6 +38,7 @@ function parseArgs(argv) {
     else if (arg === '--validate') args.validateOnly = true;
     else if (arg === '--audit')    args.auditOnly = true;
     else if (arg === '--reconcile') args.reconcileOnly = true;
+    else if (arg === '--check-mappings') args.checkMappings = true;
     else if (arg === '--tables' && argv[i + 1]) {
       args.tables = argv[++i].split(',').map(s => s.trim());
     }
@@ -277,6 +278,15 @@ async function main() {
 
   // Apply schema
   await ensureSchema(pgPool);
+
+  if (cliArgs.checkMappings) {
+    console.log('\n--- Pre-Flight Mapping Check ---\n');
+    const { errors, warnings } = await validateMappings(pgPool, { throwOnError: false });
+    console.log(`Errors:   ${errors.length}`);
+    console.log(`Warnings: ${warnings.length}`);
+    await closePools();
+    process.exit(errors.length > 0 ? 1 : 0);
+  }
 
   if (cliArgs.validateOnly) {
     // Validation only

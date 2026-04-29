@@ -471,20 +471,6 @@ CREATE TABLE IF NOT EXISTS cattle.cattle_dof_dip (
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
--- gps_locations (APP FEATURE — GPS tracking for cattle)
-CREATE TABLE IF NOT EXISTS cattle.gps_locations (
-  id          SERIAL PRIMARY KEY,
-  cow_id      INTEGER,
-  latitude    NUMERIC(10,7) NOT NULL,
-  longitude   NUMERIC(10,7) NOT NULL,
-  accuracy_m  NUMERIC(8,2),
-  recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  source      TEXT,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_gps_cow ON cattle.gps_locations(cow_id);
-CREATE INDEX IF NOT EXISTS idx_gps_recorded ON cattle.gps_locations(recorded_at DESC);
-
 -- pen_list_snapshots (OG only — pen snapshot history)
 CREATE TABLE IF NOT EXISTS cattle.pen_list_snapshots (
   id            SERIAL PRIMARY KEY,
@@ -493,6 +479,90 @@ CREATE TABLE IF NOT EXISTS cattle.pen_list_snapshots (
   head_count    INTEGER,
   snapshot_data JSONB,
   created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+
+-- ████████████████████████████████████████████████████████████████
+-- ██  MAP / GEOSPATIAL  (LSJ feature)
+-- ██  Pen polygons, paddock polygons, infrastructure pins, hazards
+-- ██  Geometry stored as GeoJSON in JSONB — no PostGIS dependency,
+-- ██  native MapLibre format, validated at the API boundary with Zod.
+-- ████████████████████████████████████████████████████████████████
+
+CREATE SCHEMA IF NOT EXISTS map;
+
+-- map.paddocks — polygons covering both feedlot pens and grazing paddocks.
+-- When type='pen', pen_id links back to pen.pens so we can join lot/ration data.
+CREATE TABLE IF NOT EXISTS map.paddocks (
+  id           SERIAL PRIMARY KEY,
+  name         TEXT NOT NULL,
+  type         TEXT NOT NULL DEFAULT 'paddock'
+               CHECK (type IN ('pen','paddock','holding','quarantine','hospital','pasture','crop','laneway','other')),
+  pen_id       INTEGER,
+  geometry     JSONB NOT NULL,
+  area_ha      NUMERIC(12,4),
+  fill_color   TEXT,
+  stroke_color TEXT,
+  notes        TEXT,
+  active       BOOLEAN NOT NULL DEFAULT true,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_map_paddocks_type   ON map.paddocks(type);
+CREATE INDEX IF NOT EXISTS idx_map_paddocks_pen    ON map.paddocks(pen_id) WHERE pen_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_map_paddocks_active ON map.paddocks(active);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_map_paddocks_pen ON map.paddocks(pen_id) WHERE pen_id IS NOT NULL;
+
+-- map.infrastructure — point features (mill, silos, troughs, yards, weighbridge, …)
+CREATE TABLE IF NOT EXISTS map.infrastructure (
+  id            SERIAL PRIMARY KEY,
+  name          TEXT NOT NULL,
+  kind          TEXT NOT NULL
+                CHECK (kind IN (
+                  'mill','silo','silage_pit','water_trough','water_tank','dam','turkey_nest',
+                  'yards','weighbridge','hospital','loadout','rubbish_tip','workshop','office',
+                  'fuel_bay','gate','feed_bay','airstrip','other'
+                )),
+  geometry      JSONB NOT NULL,
+  capacity      NUMERIC(14,2),
+  capacity_unit TEXT,
+  status        TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active','inactive','maintenance')),
+  notes         TEXT,
+  properties    JSONB DEFAULT '{}',
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_map_infra_kind   ON map.infrastructure(kind);
+CREATE INDEX IF NOT EXISTS idx_map_infra_status ON map.infrastructure(status);
+
+-- map.hazards — point or polygon flags (biosecurity, fence, hazard, weather)
+CREATE TABLE IF NOT EXISTS map.hazards (
+  id           SERIAL PRIMARY KEY,
+  title        TEXT NOT NULL,
+  severity     TEXT NOT NULL DEFAULT 'medium'
+               CHECK (severity IN ('low','medium','high','critical')),
+  category     TEXT NOT NULL DEFAULT 'general'
+               CHECK (category IN ('biosecurity','fence','water','infrastructure','wildlife','weather','general')),
+  geometry     JSONB NOT NULL,
+  description  TEXT,
+  reported_by  TEXT,
+  resolved_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_map_hazards_severity ON map.hazards(severity);
+CREATE INDEX IF NOT EXISTS idx_map_hazards_active   ON map.hazards(resolved_at) WHERE resolved_at IS NULL;
+
+-- map.farm_boundary — single (or few) outer-boundary polygon used as default extent
+CREATE TABLE IF NOT EXISTS map.farm_boundary (
+  id         SERIAL PRIMARY KEY,
+  name       TEXT,
+  geometry   JSONB NOT NULL,
+  area_ha    NUMERIC(12,2),
+  centroid   JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 
@@ -1250,14 +1320,40 @@ CREATE TABLE IF NOT EXISTS feed.feeding_time_taken_by_ration_type (
 );
 
 -- feedlot_staff (OG + V2 merged → moved to feed schema for V2 FK compat)
+-- Holds per-farm staff records inc. legacy Cattle.NET login + permission flags.
+-- Aggregated into the platform-wide system DB `system.users` via the
+-- `system.farm_user_links` table (see schema-system-v5.sql).
 CREATE TABLE IF NOT EXISTS feed.feedlot_staff (
-  user_id       SERIAL PRIMARY KEY,
-  real_name     TEXT,
-  initials      TEXT,
-  active        BOOLEAN DEFAULT TRUE,
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ
+  user_id                    INTEGER PRIMARY KEY,   -- legacy Feedlot_Staff.User_ID (stable across migrations)
+  -- Modern web-app fields
+  real_name                  TEXT,
+  initials                   TEXT,
+  active                     BOOLEAN DEFAULT TRUE,
+  -- Legacy Cattle.NET identity (preserved verbatim for migration)
+  surname                    TEXT,
+  firstname                  TEXT,
+  job_desc                   TEXT,
+  start_date                 DATE,
+  finish_date                DATE,
+  password_hash              TEXT,                  -- legacy Pass_word (plaintext on source — rehash on first login)
+  password_last_changed_date DATE,
+  -- Legacy per-module permission flags (Y/N → boolean)
+  cattle_data_entry          BOOLEAN,
+  cattle_reports             BOOLEAN,
+  cattle_utilities           BOOLEAN,
+  cattle_lookup_tables       BOOLEAN,
+  cattle_deletes             BOOLEAN,
+  feed_system_data_entry     BOOLEAN,
+  feed_system_reports        BOOLEAN,
+  feed_system_utilities      BOOLEAN,
+  pl_reports_allowed         BOOLEAN,
+  pen_rider                  BOOLEAN DEFAULT FALSE,
+  -- Audit
+  created_at                 TIMESTAMPTZ DEFAULT NOW(),
+  updated_at                 TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS idx_feedlot_staff_active ON feed.feedlot_staff(active);
+CREATE INDEX IF NOT EXISTS idx_feedlot_staff_surname ON feed.feedlot_staff(surname);
 
 -- penfeedsdata (V2: 17 clients — PARTITIONED by feed_date — core feed records)
 CREATE TABLE IF NOT EXISTS feed.penfeedsdata (
@@ -3071,15 +3167,49 @@ CREATE TABLE IF NOT EXISTS operations.drafting_settings (
   updated_at      TIMESTAMPTZ
 );
 
--- report_templates (OG web-app)
+-- report_templates (Reports + Dockets designer)
+-- Stores both Stimulsoft (template_json) and HTML (template_html/template_css) templates.
+-- See server/services/reports/report-templates.js for usage.
 CREATE TABLE IF NOT EXISTS operations.report_templates (
   id              SERIAL PRIMARY KEY,
-  name            TEXT NOT NULL,
-  report_type     TEXT,
-  template_data   JSONB,
+  report_key      VARCHAR(100) NOT NULL,
+  name            VARCHAR(255) NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'report',
+  template_format TEXT NOT NULL DEFAULT 'stimulsoft',
+  template_json   JSONB,
+  template_html   TEXT,
+  template_css    TEXT,
+  is_default      BOOLEAN DEFAULT false,
+  created_by      INTEGER,
   created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT report_templates_format_check CHECK (template_format IN ('stimulsoft', 'html')),
+  CONSTRAINT report_templates_kind_check   CHECK (kind IN ('report', 'docket')),
+  UNIQUE (report_key, is_default)
 );
+CREATE INDEX IF NOT EXISTS idx_report_templates_kind   ON operations.report_templates(kind);
+CREATE INDEX IF NOT EXISTS idx_report_templates_format ON operations.report_templates(template_format);
+
+-- dockets (printable docket records, optionally linked to a template)
+CREATE TABLE IF NOT EXISTS operations.dockets (
+  id              SERIAL PRIMARY KEY,
+  docket_number   TEXT        NOT NULL,
+  docket_type     TEXT        NOT NULL DEFAULT 'general',
+  docket_date     DATE        NOT NULL DEFAULT CURRENT_DATE,
+  template_id     INTEGER     REFERENCES operations.report_templates(id) ON DELETE SET NULL,
+  data            JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  rendered_html   TEXT,
+  status          TEXT        NOT NULL DEFAULT 'draft'
+                  CHECK (status IN ('draft', 'issued', 'voided')),
+  notes           TEXT,
+  created_by      INTEGER,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (docket_number)
+);
+CREATE INDEX IF NOT EXISTS idx_dockets_date   ON operations.dockets(docket_date DESC);
+CREATE INDEX IF NOT EXISTS idx_dockets_type   ON operations.dockets(docket_type);
+CREATE INDEX IF NOT EXISTS idx_dockets_status ON operations.dockets(status);
 
 -- agent_issues (OG web-app)
 CREATE TABLE IF NOT EXISTS operations.agent_issues (
@@ -4712,7 +4842,7 @@ DECLARE
     _fk RECORD;
     _fks TEXT[][] := ARRAY[
         -- cattle → pen, purchasing, contacts
-        ARRAY['fk_gps_cow',               'ALTER TABLE cattle.gps_locations ADD CONSTRAINT fk_gps_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE CASCADE'],
+        ARRAY['fk_map_paddocks_pen',      'ALTER TABLE map.paddocks ADD CONSTRAINT fk_map_paddocks_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_pen',              'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_purchase_lot',     'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_purchase_lot FOREIGN KEY (purchase_lot_id) REFERENCES purchasing.purchase_lots(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_program_id',       'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_program_id FOREIGN KEY (program_id) REFERENCES cattle.cattle_program_types(id) ON DELETE SET NULL'],
@@ -4964,6 +5094,83 @@ ALTER TABLE system.system_positions               ADD COLUMN IF NOT EXISTS updat
 ALTER TABLE weighing.livestock_weighbridge_dockets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE operations.bunk_call_sessions         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE operations.bunk_call_entries          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+-- ─── Bunk-call modernised columns (v2 service contract) ─────────
+-- The OG schema used session_date / called_by / completed_at / bunk_score / head_count.
+-- The current services (bunk-calls.js, farmer-overview.js, boards.js) use a more
+-- normalised set of names; add them as additional columns and backfill from the
+-- legacy ones so both sets stay in sync.
+
+ALTER TABLE operations.bunk_call_sessions
+    ADD COLUMN IF NOT EXISTS call_date     DATE,
+    ADD COLUMN IF NOT EXISTS session_type  TEXT,
+    ADD COLUMN IF NOT EXISTS submitted_by  TEXT,
+    ADD COLUMN IF NOT EXISTS submitted_at  TIMESTAMPTZ;
+
+UPDATE operations.bunk_call_sessions
+   SET call_date    = COALESCE(call_date, session_date),
+       session_type = COALESCE(session_type, 'AM'),
+       submitted_by = COALESCE(submitted_by, called_by),
+       submitted_at = COALESCE(submitted_at, completed_at)
+ WHERE call_date IS NULL OR session_type IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bunk_sessions_date_type
+    ON operations.bunk_call_sessions(call_date, session_type);
+
+ALTER TABLE operations.bunk_call_entries
+    ADD COLUMN IF NOT EXISTS score   INTEGER,
+    ADD COLUMN IF NOT EXISTS call_kg NUMERIC(10,2);
+
+UPDATE operations.bunk_call_entries
+   SET score = COALESCE(score, bunk_score)
+ WHERE score IS NULL AND bunk_score IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bunk_entries_session_pen
+    ON operations.bunk_call_entries(session_id, pen_id);
+
+-- Drop NOT NULL on legacy columns so modernised INSERTs (which only populate
+-- call_date / session_type / score) succeed.
+DO $$
+BEGIN
+    BEGIN
+        ALTER TABLE operations.bunk_call_sessions ALTER COLUMN session_date DROP NOT NULL;
+    EXCEPTION WHEN undefined_column THEN NULL;
+    END;
+END $$;
+
+-- BEFORE-INSERT triggers keep legacy ↔ modern columns in sync both ways.
+CREATE OR REPLACE FUNCTION operations.bunk_call_sessions_sync_legacy()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.session_date := COALESCE(NEW.session_date, NEW.call_date);
+    NEW.called_by    := COALESCE(NEW.called_by,    NEW.submitted_by);
+    NEW.completed_at := COALESCE(NEW.completed_at, NEW.submitted_at);
+    NEW.call_date    := COALESCE(NEW.call_date,    NEW.session_date);
+    NEW.submitted_by := COALESCE(NEW.submitted_by, NEW.called_by);
+    NEW.submitted_at := COALESCE(NEW.submitted_at, NEW.completed_at);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_bunk_call_sessions_sync_legacy ON operations.bunk_call_sessions;
+CREATE TRIGGER trg_bunk_call_sessions_sync_legacy
+    BEFORE INSERT OR UPDATE ON operations.bunk_call_sessions
+    FOR EACH ROW EXECUTE FUNCTION operations.bunk_call_sessions_sync_legacy();
+
+CREATE OR REPLACE FUNCTION operations.bunk_call_entries_sync_legacy()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.bunk_score := COALESCE(NEW.bunk_score, NEW.score);
+    NEW.score      := COALESCE(NEW.score,      NEW.bunk_score);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_bunk_call_entries_sync_legacy ON operations.bunk_call_entries;
+CREATE TRIGGER trg_bunk_call_entries_sync_legacy
+    BEFORE INSERT OR UPDATE ON operations.bunk_call_entries
+    FOR EACH ROW EXECUTE FUNCTION operations.bunk_call_entries_sync_legacy();
+
 ALTER TABLE operations.rfid_scan_sessions         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE operations.transport_dispatches       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE operations.transport_dispatch_items   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;

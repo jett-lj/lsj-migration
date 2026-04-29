@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Farms · Migration Tool</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#fafafa;--fg:#1a1a1a;--muted:#888;--border:#e0e0e0;--accent:#111;--accent-light:#f0f0f0;--green:#2d7d46;--red:#c0392b;--amber:#e67e22;--bar:#111;--bar-bg:#e5e5e5;--radius:6px}
+body{font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);line-height:1.5;min-height:100vh}
+a{color:var(--fg);text-decoration:none}
+
+/* ── Nav (matches index.html) ───────── */
+nav{display:flex;align-items:center;gap:2rem;padding:1rem 2rem;border-bottom:1px solid var(--border);background:#fff}
+nav .brand{font-weight:700;font-size:1.1rem;letter-spacing:-.02em}
+nav .links{display:flex;gap:1.5rem}
+nav .links a{font-size:.875rem;color:var(--muted);transition:color .15s;display:inline-flex;align-items:center;gap:.35rem}
+nav .links a:hover,nav .links a.active{color:var(--fg)}
+nav .links a.active{font-weight:600}
+
+/* ── Layout ─────────────────────────── */
+.page{max-width:960px;margin:0 auto;padding:3rem 1.5rem}
+h1{font-size:1.5rem;font-weight:700;margin-bottom:.25rem;letter-spacing:-.03em}
+.subtitle{font-size:.875rem;color:var(--muted);margin-bottom:2rem}
+h2{font-size:.75rem;font-weight:600;margin-bottom:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+
+/* ── Buttons ────────────────────────── */
+.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.5rem 1rem;font-size:.8rem;font-weight:600;border:none;border-radius:var(--radius);cursor:pointer;transition:background .15s,opacity .15s}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover:not(:disabled){background:#333}
+.btn-secondary{background:var(--accent-light);color:var(--fg);border:1px solid var(--border)}
+.btn-secondary:hover:not(:disabled){background:#e8e8e8}
+.btn-danger{background:transparent;color:var(--red);border:1px solid var(--border)}
+.btn-danger:hover:not(:disabled){background:#fdecea;border-color:#f5c6c2}
+.btn-sm{padding:.3rem .65rem;font-size:.72rem}
+.btn-group{display:flex;gap:.5rem;flex-wrap:wrap}
+
+/* ── Section card ───────────────────── */
+.section{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem}
+.section-header{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
+.section-header h2{margin-bottom:0}
+
+/* ── Run-all controls ───────────────── */
+.runall{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted)}
+.runall input{padding:.4rem .6rem;font-size:.8rem;border:1px solid var(--border);border-radius:var(--radius);background:#fff;font-family:inherit;min-width:200px}
+.runall input:focus{outline:none;border-color:#999}
+
+/* ── Farms table ────────────────────── */
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th{text-align:left;padding:.5rem .75rem;border-bottom:2px solid var(--border);font-weight:600;color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
+td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr.row-active{background:var(--accent-light)}
+.farm-name{font-weight:600}
+.farm-slug{font-family:'SF Mono',Consolas,monospace;font-size:.72rem;color:var(--muted)}
+.baks{display:flex;gap:.25rem;flex-wrap:wrap}
+.bak{font-size:.65rem;font-weight:600;padding:.1rem .4rem;border-radius:3px;background:var(--accent-light);color:var(--fg);font-family:'SF Mono',Consolas,monospace}
+.bak.cattle{background:#e3f2fd;color:#1565c0}
+.bak.feed{background:#fff3e0;color:#e65100}
+.bak.feedtrans{background:#f3e5f5;color:#6a1b9a}
+
+/* ── Badges ─────────────────────────── */
+.badge{display:inline-block;font-size:.65rem;font-weight:600;padding:.15rem .5rem;border-radius:3px;text-transform:uppercase;letter-spacing:.04em}
+.badge.ok{background:#e8f5e9;color:var(--green)}
+.badge.warn{background:#fff3e0;color:var(--amber)}
+.badge.fail{background:#fdecea;color:var(--red)}
+.badge.muted{background:var(--accent-light);color:var(--muted)}
+.badge.live{background:var(--accent);color:#fff}
+
+/* ── Live job panel ─────────────────── */
+.job{display:none;margin-bottom:1.5rem;background:#fff;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.job.visible{display:block}
+.job-header{padding:.75rem 1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:1rem}
+.job-header .title{font-weight:600;font-size:.85rem}
+.job-header .meta{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.job-log{font-family:'SF Mono',Consolas,monospace;font-size:.72rem;background:#fafafa;padding:.75rem 1rem;max-height:340px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;line-height:1.55}
+.job-log .stderr{color:#b8860b}
+
+/* ── Migration log modal/section ────── */
+.log-viewer{display:none;background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem}
+.log-viewer.visible{display:block}
+.log-viewer-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
+.log-viewer-header h2{margin-bottom:0}
+.log-viewer-table{font-size:.75rem}
+.log-viewer-table td.num{text-align:right;font-variant-numeric:tabular-nums}
+.log-viewer-table td.warn{color:var(--amber);font-weight:600}
+.log-viewer-table td.bad{color:var(--red);font-weight:600}
+.log-viewer-table td.ok{color:var(--green)}
+.summary-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.75rem;margin-bottom:1rem}
+.summary-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem;text-align:center}
+.summary-card .num{font-size:1.4rem;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.summary-card .label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:.125rem}
+.summary-card.ok .num{color:var(--green)}
+.summary-card.warn .num{color:var(--amber)}
+.summary-card.bad .num{color:var(--red)}
+
+/* ── Toast ──────────────────────────── */
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:.625rem 1.25rem;font-size:.8rem;font-weight:600;border-radius:var(--radius);background:var(--accent);color:#fff;opacity:0;transform:translateY(8px);transition:all .25s ease;pointer-events:none;z-index:100}
+.toast.visible{opacity:1;transform:translateY(0)}
+.toast.err{background:var(--red)}
+
+.empty{font-size:.85rem;color:var(--muted);text-align:center;padding:2rem;font-style:italic}
+
+@media(max-width:600px){
+  .page{padding:2rem 1rem}
+  table{font-size:.72rem}
+  th,td{padding:.4rem .5rem}
+  .runall input{min-width:0;flex:1}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">Migration Tool</div>
+  <div class="links">
+    <a href="/">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Start Migration
+    </a>
+    <a href="/farms.html" class="active">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Farms
+    </a>
+    <a href="/#/settings">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.32 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </a>
+    <a href="/#/compare">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Compare
+    </a>
+  </div>
+</nav>
+
+<div class="page">
+  <h1>Farm Migrations</h1>
+  <div class="subtitle">Discovered <span id="farm-count">…</span> farms with <code>.bak</code> files in <code>Cattle_databases/</code>. Restore .bak files into SQL Server, run per-farm migrations, and inspect each farm's migration log.</div>
+
+  <!-- ── Run all farms ── -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Run all farms</h2>
+      <span class="badge muted" id="job-status">idle</span>
+    </div>
+    <div class="runall">
+      <label>Resume from
+        <input type="text" id="resume-farm" placeholder="e.g. Avondale Feedlot" autocomplete="off">
+      </label>
+      <button class="btn btn-primary" id="run-all">▶ Run all</button>
+      <button class="btn btn-danger btn-sm" id="abort-job" disabled>Abort</button>
+    </div>
+  </div>
+
+  <!-- ── Live job panel ── -->
+  <div class="job" id="job">
+    <div class="job-header">
+      <div class="title" id="job-title">—</div>
+      <div class="meta" id="job-meta">—</div>
+    </div>
+    <div class="job-log" id="job-log"></div>
+  </div>
+
+  <!-- ── Migration log viewer ── -->
+  <div class="log-viewer" id="log-viewer">
+    <div class="log-viewer-header">
+      <h2>Migration log: <code id="log-db-name">—</code></h2>
+      <button class="btn btn-secondary btn-sm" id="log-close">Close</button>
+    </div>
+    <div class="summary-cards" id="log-summary"></div>
+    <table class="log-viewer-table">
+      <thead>
+        <tr><th>Source table</th><th class="num">Read</th><th class="num">Written</th><th class="num">Skipped</th><th class="num">Errored</th><th>Finished</th></tr>
+      </thead>
+      <tbody id="log-tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- ── Farms table ── -->
+  <div class="section">
+    <div class="section-header"><h2>Farms</h2></div>
+    <table>
+      <thead>
+        <tr><th>Farm</th><th>PG database</th><th>.bak files</th><th>Status</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="farms-tbody">
+        <tr><td colspan="5" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const toast = (msg, isErr) => {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.classList.add('visible');
+  setTimeout(() => t.classList.remove('visible'), 2400);
+};
+
+let farmsData = [];
+let currentJob = null;
+let jobStartMs = 0;
+let jobTimerId = null;
+
+// ── Load farms ──────────────────────────────────────
+async function loadFarms() {
+  try {
+    const r = await fetch('/api/farms');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed to load farms');
+    farmsData = data.farms;
+    $('farm-count').textContent = farmsData.length;
+    renderFarms();
+    if (data.jobRunning && data.currentJob) {
+      currentJob = data.currentJob;
+      $('job').classList.add('visible');
+      $('job-title').textContent = `${data.currentJob.type}: ${data.currentJob.farm}`;
+      $('job-status').textContent = 'running';
+      $('job-status').className = 'badge live';
+      $('abort-job').disabled = false;
+    }
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function renderFarms() {
+  const tbody = $('farms-tbody');
+  if (!farmsData.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No farms with .bak files found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = farmsData.map(f => {
+    const baks = f.baks.map(b => {
+      let cls = '';
+      if (/_Feedtrans/i.test(b)) cls = 'feedtrans';
+      else if (/_feed/i.test(b)) cls = 'feed';
+      else cls = 'cattle';
+      return `<span class="bak ${cls}" title="${b}">${b.replace(/\.bak$/i,'')}</span>`;
+    }).join('');
+    const dbBadge = f.dbExists
+      ? '<span class="badge ok">exists</span>'
+      : '<span class="badge muted">missing</span>';
+    const isActive = currentJob && currentJob.farm === f.name;
+    let statusBadge;
+    if (isActive) {
+      statusBadge = '<span class="badge live">running</span>';
+    } else if (f.migration && f.migration.failed > 0) {
+      statusBadge = `<span class="badge fail" title="${f.migration.failed} failed">failed</span>`;
+    } else if (f.migration && f.migration.ok > 0) {
+      const when = f.migration.lastCompleted ? new Date(f.migration.lastCompleted).toLocaleString() : '';
+      statusBadge = `<span class="badge ok" title="${f.migration.ok} tables · last ${when}">good</span>`;
+    } else if (f.migration && f.migration.error) {
+      statusBadge = '<span class="badge muted" title="no migration_log">—</span>';
+    } else {
+      statusBadge = '<span class="badge muted">—</span>';
+    }
+    return `<tr class="${isActive ? 'row-active' : ''}">
+      <td>
+        <div class="farm-name">${escapeHtml(f.name)}</div>
+        <div class="farm-slug">${f.slug}</div>
+      </td>
+      <td>${dbBadge}</td>
+      <td><div class="baks">${baks}</div></td>
+      <td>${statusBadge}</td>
+      <td>
+        <div class="btn-group">
+          <button class="btn btn-secondary btn-sm" data-act="restore" data-farm="${escapeAttr(f.name)}">Restore .bak</button>
+          <button class="btn btn-secondary btn-sm" data-act="log"     data-farm="${escapeAttr(f.slug)}" ${f.dbExists?'':'disabled'}>Log</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+function escapeAttr(s) { return escapeHtml(s); }
+
+// ── Actions ─────────────────────────────────────────
+$('farms-tbody').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const act = btn.dataset.act;
+  const farm = btn.dataset.farm;
+  if (act === 'restore') return startRestore(farm);
+  if (act === 'log')     return openLog(farm);
+});
+
+$('run-all').addEventListener('click', async () => {
+  const resume = $('resume-farm').value.trim() || undefined;
+  const body = resume ? { resume } : {};
+  await postJob('/api/farm/migrate-all', body, resume ? `migrate-all (resume from ${resume})` : 'migrate-all');
+});
+
+$('abort-job').addEventListener('click', async () => {
+  if (!confirm('Abort the current job? The current step will be killed.')) return;
+  try {
+    const r = await fetch('/api/farm/abort', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Abort failed');
+    toast('Aborting…');
+  } catch (e) { toast(e.message, true); }
+});
+
+async function startRestore(farm) {
+  await postJob('/api/farm/restore', { farm }, `restore: ${farm}`);
+}
+
+async function postJob(url, body, label) {
+  if (currentJob) return toast('A job is already running', true);
+  $('job-log').textContent = '';
+  $('job-title').textContent = label;
+  $('job-meta').textContent  = '0.0s';
+  $('job').classList.add('visible');
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Request failed');
+    toast('Started');
+  } catch (e) {
+    toast(e.message, true);
+    $('job').classList.remove('visible');
+  }
+}
+
+// ── Migration log viewer ────────────────────────────
+async function openLog(db) {
+  $('log-db-name').textContent = db;
+  $('log-tbody').innerHTML = '<tr><td colspan="6" class="empty">Loading…</td></tr>';
+  $('log-summary').innerHTML = '';
+  $('log-viewer').classList.add('visible');
+  $('log-viewer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  try {
+    const r = await fetch(`/api/farm/migration-log?db=${encodeURIComponent(db)}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed to load log');
+    renderLog(data.rows);
+  } catch (e) {
+    $('log-tbody').innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function renderLog(rows) {
+  if (!rows.length) {
+    $('log-tbody').innerHTML = '<tr><td colspan="6" class="empty">No migration_log entries</td></tr>';
+    return;
+  }
+  let totalRead = 0, totalWritten = 0, totalSkipped = 0, totalErrored = 0;
+  for (const r of rows) {
+    totalRead    += +r.rows_read || 0;
+    totalWritten += +r.rows_written || 0;
+    totalSkipped += +r.rows_skipped || 0;
+    totalErrored += +r.rows_errored || 0;
+  }
+  $('log-summary').innerHTML = `
+    <div class="summary-card"><div class="num">${rows.length}</div><div class="label">Tables</div></div>
+    <div class="summary-card"><div class="num">${totalRead.toLocaleString()}</div><div class="label">Rows read</div></div>
+    <div class="summary-card ok"><div class="num">${totalWritten.toLocaleString()}</div><div class="label">Written</div></div>
+    <div class="summary-card ${totalSkipped?'warn':''}"><div class="num">${totalSkipped.toLocaleString()}</div><div class="label">Skipped</div></div>
+    <div class="summary-card ${totalErrored?'bad':''}"><div class="num">${totalErrored.toLocaleString()}</div><div class="label">Errored</div></div>
+  `;
+  $('log-tbody').innerHTML = rows.map(r => {
+    const skipped = +r.rows_skipped || 0;
+    const errored = +r.rows_errored || 0;
+    return `<tr>
+      <td><code>${escapeHtml(r.source_table)}</code></td>
+      <td class="num">${(+r.rows_read || 0).toLocaleString()}</td>
+      <td class="num ok">${(+r.rows_written || 0).toLocaleString()}</td>
+      <td class="num ${skipped?'warn':''}">${skipped.toLocaleString()}</td>
+      <td class="num ${errored?'bad':''}">${errored.toLocaleString()}</td>
+      <td>${r.finished_at ? new Date(r.finished_at).toLocaleString() : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+$('log-close').addEventListener('click', () => $('log-viewer').classList.remove('visible'));
+
+// ── SSE: live job log ───────────────────────────────
+const es = new EventSource('/api/events');
+
+es.addEventListener('farm-start', (ev) => {
+  const data = JSON.parse(ev.data);
+  currentJob = { type: data.type, farm: data.farm };
+  jobStartMs = Date.now();
+  $('job-title').textContent = `${data.type}: ${data.farm}`;
+  $('job').classList.add('visible');
+  $('job-log').textContent = '';
+  $('job-status').textContent = 'running';
+  $('job-status').className = 'badge live';
+  $('abort-job').disabled = false;
+  startJobTimer();
+  renderFarms();
+});
+
+es.addEventListener('farm-log', (ev) => {
+  const data = JSON.parse(ev.data);
+  const log = $('job-log');
+  const span = document.createElement('span');
+  if (data.stream === 'stderr') span.className = 'stderr';
+  span.textContent = data.text;
+  log.appendChild(span);
+  log.scrollTop = log.scrollHeight;
+});
+
+es.addEventListener('farm-done', (ev) => {
+  const data = JSON.parse(ev.data);
+  const ok = data.code === 0;
+  $('job-status').textContent = ok ? 'done' : `failed (exit ${data.code})`;
+  $('job-status').className = `badge ${ok?'ok':'fail'}`;
+  $('job-meta').textContent  = `${(data.ms/1000).toFixed(1)}s · exit ${data.code}`;
+  $('abort-job').disabled = true;
+  currentJob = null;
+  stopJobTimer();
+  loadFarms();
+  toast(ok ? 'Job complete' : `Job failed (exit ${data.code})`, !ok);
+});
+
+es.addEventListener('farm-error', (ev) => {
+  const data = JSON.parse(ev.data);
+  $('job-status').textContent = 'error';
+  $('job-status').className = 'badge fail';
+  currentJob = null;
+  stopJobTimer();
+  toast(data.error || 'Job error', true);
+});
+
+function startJobTimer() {
+  stopJobTimer();
+  jobTimerId = setInterval(() => {
+    const s = (Date.now() - jobStartMs) / 1000;
+    $('job-meta').textContent = `${s.toFixed(1)}s`;
+  }, 200);
+}
+function stopJobTimer() {
+  if (jobTimerId) { clearInterval(jobTimerId); jobTimerId = null; }
+}
+
+loadFarms();
+</script>
+</body>
+</html>

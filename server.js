@@ -27,6 +27,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ── State ───────────────────────────────────────────
 
 let migrationRunning = false;
+let migrationAbortRequested = false;
 let sseClients = [];
 
 function broadcast(event, data) {
@@ -72,9 +73,30 @@ const FK_DO_BLOCK_RE = /DO \$\$\r?\nDECLARE\r?\n\s+_fk\b[\s\S]*?END\r?\n\$\$;/;
 
 const ALL_SCHEMAS = [
   'breeding', 'carcase', 'cattle', 'commodity', 'contacts', 'digistar',
-  'feed', 'finance', 'health', 'legacy', 'operations', 'pen', 'purchasing',
+  'feed', 'finance', 'health', 'legacy', 'map', 'operations', 'pen', 'purchasing',
   'reporting', 'system', 'transport', 'weighing'
 ];
+
+// ── Source-DB categorisation helpers ────────────────
+// Legacy SQL Server farms ship as up to 3 companion DBs:
+//   <Farm>            → main cattle DB        (category: cattle)
+//   <Farm>_feed       → feed application data (category: cattle_feed)
+//   <Farm>_Feedtrans  → feed transport data   (category: feed_transport)
+// For the bare default deployment these are simply CATTLE / CATTLE_feed / CATTLE_Feedtrans.
+function categorizeDb(name) {
+  if (/_feedtrans$/i.test(name)) return 'feed_transport';
+  if (/_feed$/i.test(name))      return 'cattle_feed';
+  return 'cattle';
+}
+function farmPrefix(name) {
+  return name.replace(/_feedtrans$/i, '').replace(/_feed$/i, '');
+}
+// runner.js looks up companion pools by these exact keys
+function poolAlias(name) {
+  if (/_feedtrans$/i.test(name)) return 'CATTLE_Feedtrans';
+  if (/_feed$/i.test(name))      return 'CATTLE_feed';
+  return 'CATTLE';
+}
 
 async function ensureSchema(pgPool) {
   const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
@@ -99,31 +121,140 @@ async function dropAllForeignKeys(pgPool) {
   console.log(`[INFO] Dropped ${rows.length} FK constraints for clean data load.`);
 }
 
+/**
+ * Restore FK constraints from the schema file using a per-FK
+ * NOT VALID + VALIDATE pattern that tolerates legacy data variation
+ * across farms (e.g. Barmount vs Rangers Valley).
+ *
+ * Strategy:
+ *   1. Extract every FK ALTER from the FK DO-block in schema-farm-v5.sql
+ *   2. Add each constraint with NOT VALID (skips existing-data check)
+ *   3. For each constraint that exists, NULL-out orphan child column
+ *      values (sentinel 0s, stale IDs from absent companion DBs, etc.)
+ *   4. Run VALIDATE per-constraint — one failure does not block the rest
+ *
+ * Returns { added, validated, total, failures }.
+ */
 async function restoreForeignKeys(pgPool) {
   const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
 
-  // Extract the FK DO-block (idempotent — uses IF NOT EXISTS internally)
-  const match = schema.match(FK_DO_BLOCK_RE);
-  if (!match) {
-    console.warn('[WARN] No FK DO-block found in schema file — skipping FK restore');
-    return;
+  // Parse FK ALTER statements out of the DO-block(s)
+  const fkBlocks = [...schema.matchAll(FK_DO_BLOCK_RE)];
+  const fkStmts = [];
+  for (const block of fkBlocks) {
+    const re = /ARRAY\['([^']+)',\s*'(ALTER TABLE[^']+)'/g;
+    let m;
+    while ((m = re.exec(block[0])) !== null) {
+      fkStmts.push({ name: m[1], sql: m[2] });
+    }
+  }
+  if (fkStmts.length === 0) {
+    console.warn('[WARN] No FK statements parsed from schema — skipping FK restore');
+    return { added: 0, validated: 0, total: 0, failures: [] };
   }
 
-  try {
-    await pgPool.query(match[0]);
-    console.log('[INFO] FK constraints restored via idempotent DO block');
-  } catch (err) {
-    console.warn(`[WARN] FK restoration error: ${err.message}`);
+  // 1) Add each FK as NOT VALID (idempotent: skip if already present)
+  let added = 0;
+  const addFailures = [];
+  for (const { name, sql } of fkStmts) {
+    const ex = await pgPool.query('SELECT 1 FROM pg_constraint WHERE conname=$1', [name]);
+    if (ex.rowCount > 0) { added++; continue; }
+    try {
+      await pgPool.query(`${sql} NOT VALID`);
+      added++;
+    } catch (err) {
+      addFailures.push({ name, error: err.message });
+    }
   }
+  console.log(`[INFO] FK constraints added (NOT VALID): ${added}/${fkStmts.length}`);
+  for (const f of addFailures) console.warn(`[WARN] FK add failed: ${f.name} — ${f.error}`);
 
-  // Count how many were actually created
-  const schemaList = ALL_SCHEMAS.map(s => `'${s}'`).join(', ');
-  const { rows } = await pgPool.query(`
-    SELECT COUNT(*) AS cnt FROM information_schema.table_constraints tc
-    WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema IN (${schemaList})
+  // 2) Look up every NOT VALID FK with the metadata needed to NULL its orphans.
+  //    Skip cleanup for NOT NULL columns (cannot NULL them safely) — those
+  //    will simply fail validation and be reported.
+  const { rows: notValidRows } = await pgPool.query(`
+    SELECT
+      con.conname                                AS name,
+      ns.nspname                                 AS child_schema,
+      cl.relname                                 AS child_table,
+      att.attname                                AS child_col,
+      att.attnotnull                             AS child_notnull,
+      pns.nspname                                AS parent_schema,
+      pcl.relname                                AS parent_table,
+      patt.attname                               AS parent_col
+    FROM pg_constraint con
+    JOIN pg_class      cl  ON cl.oid  = con.conrelid
+    JOIN pg_namespace  ns  ON ns.oid  = cl.relnamespace
+    JOIN pg_attribute  att ON att.attrelid = cl.oid AND att.attnum  = con.conkey[1]
+    JOIN pg_class      pcl ON pcl.oid = con.confrelid
+    JOIN pg_namespace  pns ON pns.oid = pcl.relnamespace
+    JOIN pg_attribute  patt ON patt.attrelid = pcl.oid AND patt.attnum = con.confkey[1]
+    WHERE con.contype = 'f' AND NOT con.convalidated
+      AND array_length(con.conkey, 1) = 1   -- only single-column FKs
   `);
-  console.log(`[INFO] FK constraints in place: ${rows[0].cnt}`);
+
+  // 3) NULL orphan rows for each NOT VALID FK whose child col is nullable
+  let cleaned = 0;
+  for (const r of notValidRows) {
+    if (r.child_notnull) continue;
+    try {
+      const upd = await pgPool.query(`
+        UPDATE "${r.child_schema}"."${r.child_table}" ch
+        SET "${r.child_col}" = NULL
+        WHERE ch."${r.child_col}" IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM "${r.parent_schema}"."${r.parent_table}" p
+            WHERE p."${r.parent_col}" = ch."${r.child_col}"
+          )
+      `);
+      if (upd.rowCount > 0) {
+        cleaned += upd.rowCount;
+        console.log(`[INFO] Nulled ${upd.rowCount} orphan row(s) on ${r.child_schema}.${r.child_table}.${r.child_col} (FK ${r.name})`);
+      }
+    } catch (err) {
+      console.warn(`[WARN] Orphan cleanup failed for ${r.name}: ${err.message}`);
+    }
+  }
+  if (cleaned > 0) {
+    console.log(`[INFO] Total orphan FK column values nulled: ${cleaned}`);
+  }
+
+  // 4) Validate each NOT VALID constraint individually
+  const { rows: toValidate } = await pgPool.query(`
+    SELECT conrelid::regclass::text AS table_name, conname AS constraint_name
+    FROM pg_constraint WHERE contype='f' AND NOT convalidated
+  `);
+  let validated = 0;
+  const valFailures = [];
+  for (const { table_name, constraint_name } of toValidate) {
+    try {
+      await pgPool.query(`ALTER TABLE ${table_name} VALIDATE CONSTRAINT "${constraint_name}"`);
+      validated++;
+    } catch (err) {
+      valFailures.push({ table: table_name, constraint: constraint_name, error: err.message });
+    }
+  }
+  console.log(`[INFO] FK constraints validated: ${validated}/${toValidate.length}`);
+  for (const f of valFailures) {
+    console.warn(`[WARN] FK validation failed: ${f.table}.${f.constraint} — ${f.error}`);
+  }
+
+  // Final tally
+  const { rows: tot } = await pgPool.query(`
+    SELECT COUNT(*) FILTER (WHERE convalidated)     AS valid,
+           COUNT(*) FILTER (WHERE NOT convalidated) AS not_valid,
+           COUNT(*)                                 AS total
+    FROM pg_constraint WHERE contype='f';
+  `);
+  console.log(`[INFO] FK constraints in place: ${tot[0].total} (valid: ${tot[0].valid}, not_valid: ${tot[0].not_valid})`);
+
+  return {
+    added,
+    validated,
+    total: fkStmts.length,
+    failures: [...addFailures, ...valFailures.map(f => ({ name: f.constraint, error: f.error }))],
+  };
 }
 
 /**
@@ -175,6 +306,15 @@ function interceptConsole() {
         skipped: parseInt(doneMatch[2]),
         errored: parseInt(doneMatch[3]),
       });
+    }
+    // Parse structured skip reports — emitted by runner.reportSkip()
+    const skipMatch = msg.match(/\[SKIP]\s+(\{.*\})/);
+    if (skipMatch) {
+      try { broadcast('skip-row', JSON.parse(skipMatch[1])); } catch (_) {}
+    }
+    const skipMoreMatch = msg.match(/\[SKIP_MORE]\s+(\{.*\})/);
+    if (skipMoreMatch) {
+      try { broadcast('skip-suppressed', JSON.parse(skipMoreMatch[1])); } catch (_) {}
     }
     broadcast('log', { level: 'info', message: msg });
   };
@@ -320,28 +460,55 @@ app.post('/api/audit', async (req, res) => {
 app.post('/api/migrate', async (req, res) => {
   if (migrationRunning) return res.status(409).json({ error: 'Migration already running' });
 
-  const { dryRun = false } = req.body || {};
+  const { dryRun = false, databases = null, wipe = false } = req.body || {};
   broadcast('migration-start', { dryRun });
   broadcast('status', { step: dryRun ? 'Starting preview (dry-run)...' : 'Connecting...' });
 
   // Respond immediately — progress goes via SSE
   res.json({ started: true, dryRun });
   migrationRunning = true;
+  migrationAbortRequested = false;
 
   const restore = interceptConsole();
 
-  try {
-    const mssqlPool = await connectMssql();
-    broadcast('status', { step: 'Connected to SQL Server' });
+  // ── Plan the run ──────────────────────────────────
+  // If `databases` provided, group by farm prefix (each farm gets its own pass
+  // with up to 3 companion DBs: CATTLE / CATTLE_feed / CATTLE_Feedtrans).
+  // If not provided, fall back to legacy single-DB behaviour using
+  // process.env.MSSQL_DATABASE.
+  let farmPlan;
+  if (Array.isArray(databases) && databases.length > 0) {
+    const byFarm = new Map();
+    for (const dbName of databases) {
+      const farm = farmPrefix(dbName) || dbName;
+      if (!byFarm.has(farm)) byFarm.set(farm, []);
+      byFarm.get(farm).push(dbName);
+    }
+    farmPlan = [...byFarm.entries()].map(([farm, dbs]) => ({ farm, dbs }));
+  } else {
+    farmPlan = [{ farm: process.env.MSSQL_DATABASE || 'CATTLE', dbs: [process.env.MSSQL_DATABASE || 'CATTLE'] }];
+  }
 
+  const sql = require('mssql');
+
+  try {
     const pgPool = connectPostgres(pgConfig());
     await pgPool.query('SELECT 1');
     broadcast('status', { step: 'Connected to PostgreSQL' });
 
+    // Optional: full wipe before any migrations
+    if (wipe && !dryRun) {
+      console.log('[INFO] Wipe requested — dropping schemas before migration...');
+      for (const s of ALL_SCHEMAS) {
+        await pgPool.query(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
+      }
+      broadcast('status', { step: 'Target wiped — applying schema...' });
+    }
+
     await ensureSchema(pgPool);
     broadcast('status', { step: 'Schema applied' });
 
-    // Drop FK constraints so inserts don't fail on load order
+    // Drop FK constraints once for the whole run
     if (!dryRun) {
       await dropAllForeignKeys(pgPool);
       broadcast('status', { step: 'FK constraints dropped for data load' });
@@ -354,34 +521,103 @@ app.post('/api/migrate', async (req, res) => {
       dryRun,
     };
 
-    // Mapped tables
-    broadcast('status', { step: 'Migrating mapped tables...' });
-    const { results } = await runMigration(mssqlPool, pgPool, opts);
+    const allMapped = [];
+    const allRaw    = [];
+    let fkRestored = false;
 
-    // Raw tables
-    broadcast('status', { step: 'Migrating raw tables...' });
-    const rawResults = await migrateRawTables(mssqlPool, pgPool, {
-      batchSize: opts.batchSize,
-      logLevel: opts.logLevel,
-      dryRun: opts.dryRun,
-    });
+    try {
+      // Iterate farms — each farm runs the full pipeline using its companion DBs
+      for (let i = 0; i < farmPlan.length; i++) {
+        if (migrationAbortRequested) {
+          console.warn(`[WARN] Abort requested — stopping after ${i} farm(s)`);
+          break;
+        }
+        const { farm, dbs } = farmPlan[i];
+        console.log(`\n=== [${i + 1}/${farmPlan.length}] Farm: ${farm} (${dbs.join(', ')}) ===`);
+        broadcast('farm-start', { index: i + 1, total: farmPlan.length, farm, dbs });
+        broadcast('status', { step: `Migrating farm ${i + 1}/${farmPlan.length}: ${farm}` });
 
-    // Restore FK constraints after all data is loaded
-    if (!dryRun) {
-      broadcast('status', { step: 'Restoring FK constraints...' });
-      await restoreForeignKeys(pgPool);
+        // Build a pool map keyed by the runner's expected aliases
+        const mssqlPools = {};
+        const openedPools = [];
+        const baseCfg = getMssqlConfig();
+        for (const dbName of dbs) {
+          try {
+            const cfg = { ...baseCfg, database: dbName };
+            const pool = await new sql.ConnectionPool(cfg).connect();
+            mssqlPools[poolAlias(dbName)] = pool;
+            openedPools.push(pool);
+            console.log(`[INFO] Connected to ${dbName} (alias ${poolAlias(dbName)})`);
+          } catch (err) {
+            console.warn(`[WARN] Could not connect to ${dbName}: ${err.message}`);
+          }
+        }
+
+        if (Object.keys(mssqlPools).length === 0) {
+          console.warn(`[WARN] No source pools available for farm ${farm} — skipping`);
+          continue;
+        }
+
+        // Mark this iteration so the runner doesn't truncate target tables on
+        // 2nd+ farm passes (would wipe data loaded by prior farms).
+        const prevSkipTrunc = process.env.SKIP_TRUNCATE;
+        const prevMssqlDb   = process.env.MSSQL_DATABASE;
+        if (i > 0) process.env.SKIP_TRUNCATE = '1';
+        // Tell runner which alias is the "default" cattle pool
+        process.env.MSSQL_DATABASE = mssqlPools['CATTLE'] ? 'CATTLE' : Object.keys(mssqlPools)[0];
+
+        try {
+          broadcast('status', { step: `[${farm}] Migrating mapped tables...` });
+          const { results } = await runMigration(mssqlPools, pgPool, opts);
+          allMapped.push(...results);
+
+          broadcast('status', { step: `[${farm}] Migrating raw tables...` });
+          const rawResults = await migrateRawTables(mssqlPools['CATTLE'] || Object.values(mssqlPools)[0], pgPool, {
+            batchSize: opts.batchSize,
+            logLevel: opts.logLevel,
+            dryRun: opts.dryRun,
+          });
+          allRaw.push(...rawResults);
+        } finally {
+          // Restore env + close this farm's pools
+          if (prevSkipTrunc === undefined) delete process.env.SKIP_TRUNCATE;
+          else process.env.SKIP_TRUNCATE = prevSkipTrunc;
+          if (prevMssqlDb === undefined) delete process.env.MSSQL_DATABASE;
+          else process.env.MSSQL_DATABASE = prevMssqlDb;
+          await Promise.all(openedPools.map(p => p.close().catch(() => {})));
+        }
+      }
+    } finally {
+      // Always attempt to restore FK constraints, even on partial failure.
+      // This prevents the DB from being left in a "no FKs" state if a farm
+      // load crashes mid-loop.
+      if (!dryRun) {
+        try {
+          broadcast('status', { step: 'Restoring FK constraints...' });
+          await restoreForeignKeys(pgPool);
+          fkRestored = true;
+        } catch (fkErr) {
+          console.warn(`[WARN] FK restore failed in finally: ${fkErr.message}`);
+        }
+      }
     }
 
-    // Validation
+    // Validation — only meaningful for single-farm runs
     let checks = [];
-    if (!dryRun) {
+    if (!dryRun && farmPlan.length === 1) {
       broadcast('status', { step: 'Validating...' });
-      checks = await validateMigration(mssqlPool, pgPool);
+      const cfg = { ...getMssqlConfig(), database: farmPlan[0].dbs[0] };
+      const valPool = await new sql.ConnectionPool(cfg).connect();
+      try {
+        checks = await validateMigration(valPool, pgPool);
+      } finally {
+        await valPool.close().catch(() => {});
+      }
     }
 
     broadcast('migration-complete', {
-      mapped: results,
-      raw: rawResults,
+      mapped: allMapped,
+      raw:    allRaw,
       checks,
       dryRun,
     });
@@ -393,7 +629,15 @@ app.post('/api/migrate', async (req, res) => {
     restore();
     await closePools().catch(() => {});
     migrationRunning = false;
+    migrationAbortRequested = false;
   }
+});
+
+app.post('/api/abort', (req, res) => {
+  if (!migrationRunning) return res.status(409).json({ error: 'No migration running' });
+  migrationAbortRequested = true;
+  broadcast('status', { step: 'Abort requested — finishing current farm…' });
+  res.json({ aborting: true });
 });
 
 // ── List PostgreSQL databases ───────────────────────
@@ -472,6 +716,272 @@ app.post('/api/create-db', async (req, res) => {
   } finally {
     await maintPool.end().catch(() => {});
   }
+});
+
+// ── List source SQL Server databases (grouped) ──────
+
+app.get('/api/list-source-databases', async (req, res) => {
+  if (migrationRunning) return res.status(409).json({ error: 'Migration is running' });
+  try {
+    const sql = require('mssql');
+    const cfg = { ...getMssqlConfig(), database: 'master' };
+    cfg.options = { ...(cfg.options || {}), connectionTimeout: 5000 };
+    const pool = await new sql.ConnectionPool(cfg).connect();
+    try {
+      const r = await pool.request().query(
+        "SELECT name FROM sys.databases " +
+        "WHERE name NOT IN ('master','tempdb','model','msdb') " +
+        "ORDER BY name"
+      );
+      const groups = { cattle: [], cattle_feed: [], feed_transport: [] };
+      for (const row of r.recordset) {
+        const cat = categorizeDb(row.name);
+        groups[cat].push({ name: row.name, farm: farmPrefix(row.name) });
+      }
+      res.json({ groups });
+    } finally {
+      await pool.close();
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Wipe target DB (DROP SCHEMA CASCADE + reapply) ──
+
+app.post('/api/wipe', async (req, res) => {
+  if (migrationRunning) return res.status(409).json({ error: 'Migration is running' });
+
+  migrationRunning = true;
+  res.json({ started: true });
+
+  const restore = interceptConsole();
+
+  try {
+    const pgPool = connectPostgres(pgConfig());
+    await pgPool.query('SELECT 1');
+    broadcast('status', { step: 'Connected to PostgreSQL' });
+
+    console.log(`[INFO] Dropping ${ALL_SCHEMAS.length} schemas with CASCADE...`);
+    for (const s of ALL_SCHEMAS) {
+      await pgPool.query(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
+      console.log(`  [-] dropped schema ${s}`);
+    }
+    broadcast('status', { step: 'Schemas dropped — reapplying schema file...' });
+
+    await ensureSchema(pgPool);
+    console.log('[INFO] Schema reapplied (FK block deferred to next migration).');
+    broadcast('status', { step: 'Wipe complete — target DB is fresh' });
+    broadcast('wipe-complete', {});
+  } catch (e) {
+    broadcast('migration-error', { error: e.message });
+    broadcast('status', { step: `Error: ${e.message}` });
+  } finally {
+    restore();
+    await closePools().catch(() => {});
+    migrationRunning = false;
+  }
+});
+
+// ── Farms (multi-farm migration) ────────────────────
+//
+// Discovery: scans Cattle_databases/ for folders with .bak files.
+// For each farm, exposes its slug (target PG db), .bak file inventory,
+// whether the PG db exists, and the latest per-table migration_log summary.
+//
+// Triggers: /api/farm/restore and /api/farm/migrate-all spawn the existing
+// CLI scripts (_restore_farm.js and _migrate_all_farms.js) as child processes
+// and stream their stdout/stderr to the SSE channel as 'farm-log' events.
+
+const { spawn: childSpawn } = require('child_process');
+
+const FARMS_ROOT = path.join(__dirname, 'Cattle_databases');
+const FARM_SKIP_FOLDERS = new Set(['RV_SQL_databases']);
+
+// Mirrors slug rules in _migrate_all_farms.js / _create_farm_dbs.js — keep in sync.
+function farmSlug(name) {
+  let s = String(name).toLowerCase()
+    .replace(/&/g, '_and_')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+  if (!/^[a-z_]/.test(s)) s = 'farm_' + s;
+  if (s.length > 63) s = s.slice(0, 63).replace(/_+$/, '');
+  return s;
+}
+
+function listFarms() {
+  if (!fs.existsSync(FARMS_ROOT)) return [];
+  return fs.readdirSync(FARMS_ROOT, { withFileTypes: true })
+    .filter(d => d.isDirectory() && !FARM_SKIP_FOLDERS.has(d.name))
+    .map(d => {
+      const dir = path.join(FARMS_ROOT, d.name);
+      const baks = fs.readdirSync(dir).filter(f => /\.bak$/i.test(f)).sort();
+      return { name: d.name, slug: farmSlug(d.name), baks };
+    })
+    .filter(f => f.baks.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+let farmJob = null; // { type, farm, child, log:[] }
+
+function streamChild(type, farm, cmd, args) {
+  const child = childSpawn(cmd, args, {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      // Bump V8 heap so large farms (16M+ rows in parallel) don't OOM-crash
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=8192`.trim(),
+    },
+    // shell:false (default) — Windows path with spaces handled correctly
+  });
+  farmJob = { type, farm, child, log: [], startedAt: Date.now() };
+  broadcast('farm-start', { type, farm });
+
+  const onChunk = (stream) => (buf) => {
+    const text = buf.toString();
+    farmJob.log.push(text);
+    if (farmJob.log.length > 2000) farmJob.log.splice(0, farmJob.log.length - 2000);
+    broadcast('farm-log', { type, farm, stream, text });
+  };
+  child.stdout.on('data', onChunk('stdout'));
+  child.stderr.on('data', onChunk('stderr'));
+
+  child.on('close', (code) => {
+    broadcast('farm-done', { type, farm, code, ms: Date.now() - farmJob.startedAt });
+    farmJob = null;
+  });
+  child.on('error', (err) => {
+    broadcast('farm-error', { type, farm, error: err.message });
+    farmJob = null;
+  });
+}
+
+app.get('/api/farms', async (req, res) => {
+  try {
+    const farms = listFarms();
+
+    // Look up which PG databases exist (best-effort).
+    const { Pool } = require('pg');
+    const cfg = pgConfig();
+    const maintCfg = cfg.connectionString
+      ? (() => { const u = new URL(cfg.connectionString); u.pathname = '/postgres'; return { connectionString: u.toString(), max: 1 }; })()
+      : { ...cfg, database: 'postgres', max: 1 };
+    const pool = new Pool(maintCfg);
+    let existing = new Set();
+    try {
+      const r = await pool.query('SELECT datname FROM pg_database WHERE datistemplate = false');
+      existing = new Set(r.rows.map(x => x.datname));
+    } finally {
+      await pool.end().catch(() => {});
+    }
+
+    for (const f of farms) f.dbExists = existing.has(f.slug);
+
+    // Best-effort: query each existing farm DB for migration_log summary.
+    await Promise.all(farms.filter(f => f.dbExists).map(async (f) => {
+      const fcfg = { ...pgConfig(), database: f.slug, max: 1, connectionTimeoutMillis: 3000 };
+      delete fcfg.connectionString;
+      const fpool = new Pool(fcfg);
+      try {
+        const r = await fpool.query(
+          `WITH latest_per_table AS (
+             SELECT DISTINCT ON (source_table)
+                    source_table,
+                    status,
+                    completed_at
+               FROM system.migration_log
+              ORDER BY source_table, id DESC
+           )
+           SELECT COUNT(*) FILTER (WHERE status = 'completed') AS ok,
+                  COUNT(*) FILTER (WHERE status = 'failed')    AS failed,
+                  COUNT(*) FILTER (WHERE status = 'running')   AS running,
+                  MAX(completed_at)                            AS last_completed
+             FROM latest_per_table`
+        );
+        const row = r.rows[0] || {};
+        f.migration = {
+          ok:           Number(row.ok || 0),
+          failed:       Number(row.failed || 0),
+          running:      Number(row.running || 0),
+          lastCompleted: row.last_completed,
+        };
+      } catch (e) {
+        f.migration = { error: e.message };
+      } finally {
+        await fpool.end().catch(() => {});
+      }
+    }));
+
+    res.json({ farms, jobRunning: !!farmJob, currentJob: farmJob ? { type: farmJob.type, farm: farmJob.farm } : null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/farm/migration-log', async (req, res) => {
+  const db = String(req.query.db || '').trim();
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(db)) {
+    return res.status(400).json({ error: 'Invalid db name' });
+  }
+  const { Pool } = require('pg');
+  const cfg = { ...pgConfig(), database: db, max: 1 };
+  delete cfg.connectionString;
+  const pool = new Pool(cfg);
+  try {
+    const r = await pool.query(
+      `SELECT source_table,
+              rows_read,
+              rows_written,
+              rows_skipped,
+              rows_errored,
+              started_at,
+              completed_at AS finished_at
+         FROM system.migration_log
+        ORDER BY id DESC
+        LIMIT 500`
+    );
+    res.json({ rows: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    await pool.end().catch(() => {});
+  }
+});
+
+app.post('/api/farm/restore', (req, res) => {
+  if (farmJob)          return res.status(409).json({ error: `Job already running: ${farmJob.type} ${farmJob.farm}` });
+  if (migrationRunning) return res.status(409).json({ error: 'Migration is running' });
+
+  const { farm } = req.body || {};
+  if (!farm || typeof farm !== 'string') return res.status(400).json({ error: 'farm required' });
+
+  const known = new Set(listFarms().map(f => f.name));
+  if (!known.has(farm)) return res.status(404).json({ error: `Unknown farm: ${farm}` });
+
+  streamChild('restore', farm, process.execPath, ['_restore_farm.js', farm]);
+  res.json({ started: true, farm });
+});
+
+app.post('/api/farm/migrate-all', (req, res) => {
+  if (farmJob)          return res.status(409).json({ error: `Job already running: ${farmJob.type} ${farmJob.farm}` });
+  if (migrationRunning) return res.status(409).json({ error: 'Migration is running' });
+
+  const { resume, only, skip } = req.body || {};
+  const args = ['_migrate_all_farms.js'];
+  if (resume) args.push('--resume', String(resume));
+  if (only)   args.push('--only',   String(only));
+  if (Array.isArray(skip) && skip.length) args.push('--skip', skip.join(','));
+
+  const label = resume ? `resume:${resume}` : (only || 'all');
+  streamChild('migrate-all', label, process.execPath, args);
+  res.json({ started: true, label });
+});
+
+app.post('/api/farm/abort', (req, res) => {
+  if (!farmJob) return res.status(409).json({ error: 'No farm job running' });
+  try { farmJob.child.kill(); } catch (_) {}
+  res.json({ aborting: true });
 });
 
 // ── SPA fallback ────────────────────────────────────

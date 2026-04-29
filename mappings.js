@@ -1255,6 +1255,7 @@ const mappings = [
             FROM dbo.SubGroupNames
             ORDER BY ID`,
     columns: [
+      { source: 'ID',        target: 'code', transform: toNum },
       { source: 'Sub_Group', target: 'name', transform: trimOrNull },
     ],
     staticColumns: { category: 'sub_group' },
@@ -3705,7 +3706,7 @@ const mappings = [
       { source: 'Kgs_Head_Adj',       target: 'kgs_head_adj',       transform: toNum },
       { source: 'Rec_ID',             target: 'rec_id' },
     ],
-    staticColumns: { feedingtype: 'GE150' },
+    staticColumns: { variant: 'GE150' },
   },
 
   {
@@ -3720,7 +3721,7 @@ const mappings = [
       { source: 'Kgs_Head_Adj',       target: 'kgs_head_adj',       transform: toNum },
       { source: 'Rec_ID',             target: 'rec_id' },
     ],
-    staticColumns: { feedingtype: 'L150' },
+    staticColumns: { variant: 'L150' },
   },
 
   {
@@ -3735,7 +3736,7 @@ const mappings = [
       { source: 'Kgs_Head_Adj',       target: 'kgs_head_adj',       transform: toNum },
       { source: 'Rec_ID',             target: 'rec_id' },
     ],
-    staticColumns: { feedingtype: 'Plateau' },
+    staticColumns: { variant: 'Plateau' },
   },
 
   {
@@ -3750,7 +3751,7 @@ const mappings = [
       { source: 'Kgs_Head_Adj',       target: 'kgs_head_adj',       transform: toNum },
       { source: 'Rec_ID',             target: 'rec_id' },
     ],
-    staticColumns: { feedingtype: 'ShortFeed' },
+    staticColumns: { variant: 'ShortFeed' },
   },
 
   {
@@ -3765,7 +3766,7 @@ const mappings = [
       { source: 'Kgs_Head_Adj',       target: 'kgs_head_adj',       transform: toNum },
       { source: 'Rec_ID',             target: 'rec_id' },
     ],
-    staticColumns: { feedingtype: 'WAGYU' },
+    staticColumns: { variant: 'WAGYU' },
   },
 
   // ── Consolidated feeding regimen tables (5 variants → 1 target) ──
@@ -3783,7 +3784,7 @@ const mappings = [
       { source: 'Accum_BunkCode_days',    target: 'accum_bunkcode_days',    transform: toNum },
       { source: 'Feeding_Regimen_ID',     target: 'feeding_regimen_id' },
     ],
-    staticColumns: { feedingtype: 'GE150' },
+    staticColumns: { variant: 'GE150' },
   },
 
   {
@@ -3799,7 +3800,7 @@ const mappings = [
       { source: 'Accum_BunkCode_days',    target: 'accum_bunkcode_days',    transform: toNum },
       { source: 'Feeding_Regimen_ID',     target: 'feeding_regimen_id' },
     ],
-    staticColumns: { feedingtype: 'L150' },
+    staticColumns: { variant: 'L150' },
   },
 
   {
@@ -3815,7 +3816,7 @@ const mappings = [
       { source: 'Accum_BunkCode_days',    target: 'accum_bunkcode_days',    transform: toNum },
       { source: 'Feeding_Regimen_ID',     target: 'feeding_regimen_id' },
     ],
-    staticColumns: { feedingtype: 'Plateau' },
+    staticColumns: { variant: 'Plateau' },
   },
 
   {
@@ -3831,7 +3832,7 @@ const mappings = [
       { source: 'Accum_BunkCode_days',    target: 'accum_bunkcode_days',    transform: toNum },
       { source: 'Feeding_Regimen_ID',     target: 'feeding_regimen_id' },
     ],
-    staticColumns: { feedingtype: 'ShortFeed' },
+    staticColumns: { variant: 'ShortFeed' },
   },
 
   {
@@ -3847,7 +3848,7 @@ const mappings = [
       { source: 'Accum_BunkCode_days',    target: 'accum_bunkcode_days',    transform: toNum },
       { source: 'Feeding_Regimen_ID',     target: 'feeding_regimen_id' },
     ],
-    staticColumns: { feedingtype: 'WAGYU' },
+    staticColumns: { variant: 'WAGYU' },
   },
 
   // ── Consolidated system info tables ─────────────────────────

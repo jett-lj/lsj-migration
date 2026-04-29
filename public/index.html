@@ -130,7 +130,43 @@ tr:last-child td{border-bottom:none}
 .diff-list .changed{color:#e67e22}
 .diff-empty{font-size:.8rem;color:var(--muted);font-style:italic;padding:.5rem 0}
 
-/* ── Responsive ──────────────────────── */
+/* ── Source DB picker ───────────────────── */
+.dbpicker{margin-bottom:2rem}
+.dbpicker-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem}
+.dbpicker-header h2{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.dbpicker-header .small{font-size:.75rem;color:var(--muted);background:none;border:none;padding:0;cursor:pointer;transition:color .15s}
+.dbpicker-header .small:hover{color:var(--fg)}
+#dbgroups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}
+.dbgroup{min-width:0}
+.dbgroup-header{display:flex;align-items:center;gap:.5rem;font-size:.8rem;font-weight:500;padding-bottom:.375rem;border-bottom:1px solid var(--border);margin-bottom:.5rem}
+.dbgroup-header label{cursor:pointer;display:flex;align-items:center;gap:.5rem;flex:1;color:var(--fg);min-width:0}
+.dbgroup-header label span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dbgroup-header .count{font-size:.7rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.dbgroup-list{display:flex;flex-direction:column;gap:.125rem;padding-left:1.375rem;max-height:180px;overflow-y:auto}
+.dbgroup-list label{display:flex;align-items:center;gap:.45rem;font-size:.8rem;cursor:pointer;color:var(--muted);padding:.125rem 0;transition:color .1s;min-width:0}
+.dbgroup-list label span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dbgroup-list label:hover{color:var(--fg)}
+.dbgroup-list label:has(input:checked){color:var(--fg)}
+.dbgroup-empty{padding-left:1.375rem;font-size:.75rem;color:var(--muted);font-style:italic}
+.dbpicker input[type="checkbox"]{accent-color:var(--accent);cursor:pointer;flex-shrink:0}
+.option-row{display:flex;align-items:center;gap:.5rem;margin-bottom:1.25rem;font-size:.8rem;color:var(--muted)}
+.option-row label{display:flex;align-items:center;gap:.45rem;cursor:pointer}
+.option-row input[type="checkbox"]{accent-color:var(--accent);cursor:pointer}
+.btn-danger{background:transparent;color:var(--red);border:1px solid var(--border)}
+.farm-banner{font-size:.8rem;color:var(--muted);margin-bottom:.5rem;font-variant-numeric:tabular-nums}
+.farm-banner strong{color:var(--fg);font-weight:600}
+.btn-primary:disabled,.btn-secondary:disabled,.btn-danger:disabled{opacity:.4;cursor:not-allowed}
+#migrate-section.running .dbpicker,#migrate-section.running .option-row{display:none}
+.skipped-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem}
+.skipped-header h2{margin:0}
+.skipped-header .muted{color:var(--muted);font-size:.8rem;font-weight:400;margin-left:.5rem}
+.skipped-controls{display:flex;gap:.5rem;align-items:center}
+.skipped-controls select{font-size:.75rem;padding:.25rem .4rem;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px}
+#skipped-body td{font-size:.75rem;font-family:ui-monospace,monospace;vertical-align:top;word-break:break-word}
+#skipped-body td:nth-child(2){color:var(--red)}
+.btn-danger:hover:not(:disabled){background:#fdecea;border-color:#f5c6c2}
+@media(max-width:600px){#dbgroups{grid-template-columns:1fr}}
+
 @media(max-width:480px){
   nav{padding:.75rem 1rem;gap:1rem}
   .page{padding:2rem 1rem}
@@ -148,6 +184,10 @@ tr:last-child td{border-bottom:none}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
       Start Migration
     </a>
+    <a href="/farms.html" data-page="farms">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Farms
+    </a>
     <a href="#/settings" data-page="settings">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.32 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Settings
@@ -161,10 +201,25 @@ tr:last-child td{border-bottom:none}
 
 <!-- ═══════════════════════════════════════ MIGRATE PAGE -->
 <div id="page-migrate" class="page">
+  <div id="migrate-section">
   <h1>Start Migration</h1>
   <p class="subtitle">SQL Server → PostgreSQL</p>
 
   <p class="optim-pill">30 indexes &middot; 22 foreign keys &middot; 22 data checks &middot; 9 auto-trim triggers &middot; cascade deletes</p>
+
+  <div class="dbpicker" id="dbpicker">
+    <div class="dbpicker-header">
+      <h2>Source Databases</h2>
+      <button class="small" onclick="loadSourceDatabases()">Refresh</button>
+    </div>
+    <div id="dbgroups">
+      <div class="dbgroup-empty">Loading source databases…</div>
+    </div>
+  </div>
+
+  <div class="option-row">
+    <label><input type="checkbox" id="opt-wipe"> Wipe target (DROP SCHEMA CASCADE) before loading</label>
+  </div>
 
   <div class="btn-group">
     <button class="btn btn-primary" id="btn-start" onclick="startMigration(false)">
@@ -175,9 +230,18 @@ tr:last-child td{border-bottom:none}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       Preview (Dry-run)
     </button>
+    <button class="btn btn-danger" id="btn-wipe" onclick="wipeTarget()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      Drop All Data
+    </button>
+    <button class="btn btn-danger" id="btn-abort" onclick="abortMigration()" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      Abort
+    </button>
   </div>
 
   <div class="overall-progress" id="overall-progress">
+    <div class="farm-banner" id="farm-banner" style="display:none"></div>
     <div class="overall-header">
       <span class="timer" id="timer">00:00</span>
       <span class="tables-done" id="tables-done">0 / 0 tables</span>
@@ -216,10 +280,35 @@ tr:last-child td{border-bottom:none}
     </table>
   </div>
 
+  <div class="results" id="skipped-section" style="display:none">
+    <div class="skipped-header">
+      <h2>Skipped Rows <span class="muted" id="skipped-count">0</span></h2>
+      <div class="skipped-controls">
+        <select id="skipped-filter-table" onchange="renderSkipped()"><option value="">All tables</option></select>
+        <select id="skipped-filter-reason" onchange="renderSkipped()">
+          <option value="">All reasons</option>
+          <option value="junk">junk</option>
+          <option value="orphan-cow">orphan-cow</option>
+          <option value="validate">validate</option>
+          <option value="pg-conflict">pg-conflict</option>
+          <option value="pg-row-error">pg-row-error</option>
+          <option value="transform-error">transform-error</option>
+        </select>
+        <button class="small" onclick="downloadSkippedCsv()">Download CSV</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Table</th><th>Reason</th><th>Key</th><th>Detail</th></tr></thead>
+      <tbody id="skipped-body"></tbody>
+    </table>
+    <div id="skipped-suppressed" class="muted" style="margin-top:.5rem;font-size:.75rem"></div>
+  </div>
+
   <details class="log-section">
     <summary>Console log</summary>
     <div class="log" id="log"></div>
   </details>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════ SETTINGS PAGE -->
@@ -426,13 +515,35 @@ sse.addEventListener('migration-start', () => {
   document.getElementById('log').innerHTML = '';
   document.getElementById('btn-start').disabled = true;
   document.getElementById('btn-preview').disabled = true;
+  document.getElementById('btn-wipe').disabled = true;
+  document.getElementById('btn-abort').style.display = '';
+  document.getElementById('migrate-section').classList.add('running');
+  // Reset skipped section
+  _skippedRows = [];
+  _skippedSuppressed = {};
+  document.getElementById('skipped-section').style.display = 'none';
+  document.getElementById('skipped-body').innerHTML = '';
+  document.getElementById('skipped-suppressed').textContent = '';
+  document.getElementById('skipped-count').textContent = '0';
+  document.getElementById('skipped-filter-table').innerHTML = '<option value="">All tables</option>';
   startTimer();
+});
+
+sse.addEventListener('farm-start', e => {
+  const { index, total, farm, dbs } = JSON.parse(e.data);
+  const banner = document.getElementById('farm-banner');
+  banner.style.display = '';
+  banner.innerHTML = `Farm <strong>${index} of ${total}</strong>: ${farm} <span style="color:var(--muted)">(${dbs.join(', ')})</span>`;
 });
 
 sse.addEventListener('migration-complete', e => {
   const { mapped, raw, checks, dryRun } = JSON.parse(e.data);
   document.getElementById('btn-start').disabled = false;
   document.getElementById('btn-preview').disabled = false;
+  document.getElementById('btn-wipe').disabled = false;
+  document.getElementById('btn-abort').style.display = 'none';
+  document.getElementById('migrate-section').classList.remove('running');
+  updateStartEnabled();
 
   const el = document.getElementById('status');
   el.textContent = dryRun ? 'Preview complete' : 'Migration complete';
@@ -482,7 +593,11 @@ sse.addEventListener('migration-error', e => {
   const { error } = JSON.parse(e.data);
   document.getElementById('btn-start').disabled = false;
   document.getElementById('btn-preview').disabled = false;
+  document.getElementById('btn-wipe').disabled = false;
+  document.getElementById('btn-abort').style.display = 'none';
+  document.getElementById('migrate-section').classList.remove('running');
   document.getElementById('progress-wrap').classList.remove('visible');
+  updateStartEnabled();
   stopTimer();
   toast(error, true);
 });
@@ -497,14 +612,92 @@ sse.addEventListener('log', e => {
   el.scrollTop = el.scrollHeight;
 });
 
+// ── Skipped rows ────────────────────────────────────
+let _skippedRows = [];
+let _skippedSuppressed = {};
+
+sse.addEventListener('skip-row', e => {
+  const entry = JSON.parse(e.data);
+  _skippedRows.push(entry);
+  // Add table to filter dropdown if new
+  const sel = document.getElementById('skipped-filter-table');
+  if (![...sel.options].some(o => o.value === entry.table)) {
+    const opt = document.createElement('option');
+    opt.value = entry.table; opt.textContent = entry.table;
+    sel.appendChild(opt);
+  }
+  document.getElementById('skipped-section').style.display = '';
+  document.getElementById('skipped-count').textContent = _skippedRows.length.toLocaleString();
+  // Append-only render for performance
+  appendSkippedRow(entry);
+});
+
+sse.addEventListener('skip-suppressed', e => {
+  const { table, reason, suppressed_after } = JSON.parse(e.data);
+  _skippedSuppressed[`${table}|${reason}`] = suppressed_after;
+  const list = Object.entries(_skippedSuppressed)
+    .map(([k, n]) => `${k.replace('|', ' / ')} (showing first ${n})`)
+    .join(' \u00b7 ');
+  document.getElementById('skipped-suppressed').textContent =
+    `Some skip groups truncated: ${list}`;
+});
+
+function rowMatchesFilter(entry) {
+  const t = document.getElementById('skipped-filter-table').value;
+  const r = document.getElementById('skipped-filter-reason').value;
+  return (!t || entry.table === t) && (!r || entry.reason === r);
+}
+
+function appendSkippedRow(entry) {
+  if (!rowMatchesFilter(entry)) return;
+  const tbody = document.getElementById('skipped-body');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>${escapeHtml(entry.table || '')}</td>
+    <td>${escapeHtml(entry.reason || '')}</td>
+    <td>${escapeHtml(entry.key || '')}</td>
+    <td>${escapeHtml(entry.message || '')}</td>`;
+  tbody.appendChild(tr);
+}
+
+function renderSkipped() {
+  const tbody = document.getElementById('skipped-body');
+  tbody.innerHTML = '';
+  for (const e of _skippedRows) appendSkippedRow(e);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function downloadSkippedCsv() {
+  if (_skippedRows.length === 0) { toast('No skipped rows to export'); return; }
+  const header = 'table,reason,key,message\n';
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const body = _skippedRows.map(r => [r.table, r.reason, r.key, r.message].map(esc).join(',')).join('\n');
+  const blob = new Blob([header + body], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `skipped-rows-${Date.now()}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ── Migration ───────────────────────────────────────
 
 async function startMigration(dryRun) {
+  const databases = getSelectedDatabases();
+  const wipe      = document.getElementById('opt-wipe').checked;
+  if (databases.length === 0) {
+    toast('Select at least one source database', true);
+    return;
+  }
+  saveDbSelections();
   try {
     const res = await fetch('/api/migrate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dryRun }),
+      body: JSON.stringify({ dryRun, databases, wipe }),
     });
     const data = await res.json();
     if (!res.ok) toast(data.error, true);
@@ -512,6 +705,188 @@ async function startMigration(dryRun) {
     toast('Failed to start migration', true);
   }
 }
+
+async function abortMigration() {
+  if (!confirm('Abort the running migration after the current farm finishes?')) return;
+  try {
+    const res = await fetch('/api/abort', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) toast(data.error || 'Could not abort', true);
+    else toast('Abort requested');
+  } catch (e) {
+    toast('Failed to send abort', true);
+  }
+}
+
+// ── Persisted UI state ────────────────────────────
+const LS_DB_KEY    = 'lsj.migrate.selectedDbs';
+const LS_WIPE_KEY  = 'lsj.migrate.wipeBeforeLoad';
+
+function loadDbSelections() {
+  try {
+    const raw = localStorage.getItem(LS_DB_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+function saveDbSelections() {
+  try { localStorage.setItem(LS_DB_KEY, JSON.stringify(getSelectedDatabases())); } catch (_) {}
+}
+function updateStartEnabled() {
+  const has = getSelectedDatabases().length > 0;
+  const startBtn = document.getElementById('btn-start');
+  const prevBtn  = document.getElementById('btn-preview');
+  // Don't override during a run
+  if (document.getElementById('migrate-section').classList.contains('running')) return;
+  startBtn.disabled = !has;
+  prevBtn.disabled  = !has;
+}
+
+// ── Source DB picker ────────────────────────────────
+
+const CATEGORY_LABELS = {
+  cattle:         'Cattle (main)',
+  cattle_feed:    'Cattle Feed',
+  feed_transport: 'Feed Transport',
+};
+
+async function loadSourceDatabases() {
+  const container = document.getElementById('dbgroups');
+  container.innerHTML = '<div class="dbgroup-empty">Loading source databases…</div>';
+  try {
+    const res = await fetch('/api/list-source-databases');
+    const data = await res.json();
+    if (!res.ok) {
+      container.innerHTML = `<div class="dbgroup-empty">Could not list databases: ${data.error || 'unknown error'}</div>`;
+      return;
+    }
+    renderSourceDatabases(data.groups);
+  } catch (e) {
+    container.innerHTML = `<div class="dbgroup-empty">Could not list databases: ${e.message}</div>`;
+  }
+}
+
+function renderSourceDatabases(groups) {
+  const container = document.getElementById('dbgroups');
+  container.innerHTML = '';
+  const saved = loadDbSelections();
+  for (const cat of ['cattle', 'cattle_feed', 'feed_transport']) {
+    const list = groups[cat] || [];
+    const group = document.createElement('div');
+    group.className = 'dbgroup';
+    // When there's only one DB in the group, the group toggle IS the DB checkbox
+    // (no need for a redundant nested row).
+    const singleDb = list.length === 1;
+    const headerValue = singleDb ? `data-single="${list[0].name}"` : '';
+    const isChecked = (name) => !saved || saved.includes(name);
+    let groupChecked;
+    if (list.length === 0) groupChecked = false;
+    else if (singleDb)    groupChecked = isChecked(list[0].name);
+    else                  groupChecked = list.every(db => isChecked(db.name));
+    const countLabel = (!singleDb && list.length > 0) ? `<span class="count">${list.length}</span>` : '';
+    group.innerHTML = `
+      <div class="dbgroup-header">
+        <label><input type="checkbox" class="grp-toggle" data-cat="${cat}" ${headerValue} ${groupChecked ? 'checked' : ''} ${list.length === 0 ? 'disabled' : ''}> <span>${CATEGORY_LABELS[cat]}</span></label>
+        ${countLabel}
+      </div>
+      ${list.length === 0
+        ? '<div class="dbgroup-empty">None</div>'
+        : singleDb
+          ? ''
+          : `<div class="dbgroup-list">${list.map(db => `
+              <label><input type="checkbox" class="db-cb" data-cat="${cat}" value="${db.name}" ${isChecked(db.name) ? 'checked' : ''}> <span>${db.name}</span></label>
+            `).join('')}</div>`}
+    `;
+    container.appendChild(group);
+  }
+  // Wire group toggles → tick child checkboxes (multi-DB groups only)
+  container.querySelectorAll('.grp-toggle').forEach(toggle => {
+    toggle.addEventListener('change', () => {
+      const cat = toggle.dataset.cat;
+      container.querySelectorAll(`.db-cb[data-cat="${cat}"]`).forEach(cb => {
+        cb.checked = toggle.checked;
+      });
+      saveDbSelections();
+      updateStartEnabled();
+    });
+  });
+  // Wire individual checkboxes → keep group toggle in sync
+  container.querySelectorAll('.db-cb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const cat = cb.dataset.cat;
+      const all = [...container.querySelectorAll(`.db-cb[data-cat="${cat}"]`)];
+      const grpToggle = container.querySelector(`.grp-toggle[data-cat="${cat}"]`);
+      grpToggle.checked = all.every(c => c.checked);
+      grpToggle.indeterminate = !grpToggle.checked && all.some(c => c.checked);
+      saveDbSelections();
+      updateStartEnabled();
+    });
+  });
+  // Sync indeterminate state for multi-DB groups on initial render
+  container.querySelectorAll('.grp-toggle').forEach(toggle => {
+    if (toggle.dataset.single) return;
+    const cat = toggle.dataset.cat;
+    const all = [...container.querySelectorAll(`.db-cb[data-cat="${cat}"]`)];
+    if (all.length === 0) return;
+    toggle.checked = all.every(c => c.checked);
+    toggle.indeterminate = !toggle.checked && all.some(c => c.checked);
+  });
+  updateStartEnabled();
+}
+
+function getSelectedDatabases() {
+  const out = [];
+  // Single-DB groups: include the DB if the group toggle is checked
+  document.querySelectorAll('#dbgroups .grp-toggle[data-single]').forEach(t => {
+    if (t.checked) out.push(t.dataset.single);
+  });
+  // Multi-DB groups: per-checkbox values
+  document.querySelectorAll('#dbgroups .db-cb:checked').forEach(cb => out.push(cb.value));
+  return out;
+}
+
+loadSourceDatabases();
+
+// Restore + persist the wipe checkbox
+(function initWipeCheckbox() {
+  const cb = document.getElementById('opt-wipe');
+  try { cb.checked = localStorage.getItem(LS_WIPE_KEY) === '1'; } catch (_) {}
+  cb.addEventListener('change', () => {
+    try { localStorage.setItem(LS_WIPE_KEY, cb.checked ? '1' : '0'); } catch (_) {}
+  });
+})();
+
+// ── Wipe target DB ──────────────────────────────────
+
+async function wipeTarget() {
+  const dbName = (document.getElementById('pg-database')?.value || '').trim() || '(target database)';
+  if (!confirm(`Drop ALL schemas in "${dbName}" (CASCADE) and reapply the schema file?\n\nThis cannot be undone.`)) return;
+  const btn = document.getElementById('btn-wipe');
+  btn.disabled = true;
+  document.getElementById('btn-start').disabled   = true;
+  document.getElementById('btn-preview').disabled = true;
+  try {
+    const res = await fetch('/api/wipe', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error, true);
+      btn.disabled = false;
+      document.getElementById('btn-start').disabled   = false;
+      document.getElementById('btn-preview').disabled = false;
+    }
+  } catch (e) {
+    toast('Failed to start wipe', true);
+    btn.disabled = false;
+    document.getElementById('btn-start').disabled   = false;
+    document.getElementById('btn-preview').disabled = false;
+  }
+}
+
+sse.addEventListener('wipe-complete', () => {
+  document.getElementById('btn-wipe').disabled    = false;
+  document.getElementById('btn-start').disabled   = false;
+  document.getElementById('btn-preview').disabled = false;
+  toast('Target wiped — fresh schema applied');
+});
 
 // ── Settings ────────────────────────────────────────
 
