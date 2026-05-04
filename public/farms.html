@@ -95,6 +95,9 @@ tr.row-active{background:var(--accent-light)}
 .summary-card.warn .num{color:var(--amber)}
 .summary-card.bad .num{color:var(--red)}
 
+/* ── Farm status summary ───────────────── */
+.farm-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.75rem;margin-bottom:1.5rem}
+
 /* ── Toast ──────────────────────────── */
 .toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:.625rem 1.25rem;font-size:.8rem;font-weight:600;border-radius:var(--radius);background:var(--accent);color:#fff;opacity:0;transform:translateY(8px);transition:all .25s ease;pointer-events:none;z-index:100}
 .toast.visible{opacity:1;transform:translateY(0)}
@@ -138,6 +141,12 @@ tr.row-active{background:var(--accent-light)}
   <h1>Farm Migrations</h1>
   <div class="subtitle">Discovered <span id="farm-count">…</span> farms with <code>.bak</code> files in <code>Cattle_databases/</code>. Restore .bak files into SQL Server, run per-farm migrations, and inspect each farm's migration log.</div>
 
+  <div class="farm-summary" id="farm-summary">
+    <div class="summary-card"><div class="num" id="sum-total">0</div><div class="label">Total farms</div></div>
+    <div class="summary-card ok"><div class="num" id="sum-exists">0</div><div class="label">PG exists</div></div>
+    <div class="summary-card warn"><div class="num" id="sum-missing">0</div><div class="label">PG missing</div></div>
+  </div>
+
   <!-- ── Run all farms ── -->
   <div class="section">
     <div class="section-header">
@@ -149,6 +158,8 @@ tr.row-active{background:var(--accent-light)}
         <input type="text" id="resume-farm" placeholder="e.g. Avondale Feedlot" autocomplete="off">
       </label>
       <button class="btn btn-primary" id="run-all">▶ Run all</button>
+      <button class="btn btn-secondary" id="create-missing-dbs">Create Missing PG DBs</button>
+      <button class="btn btn-danger" id="clear-farm-dbs">Clear Farm PG DBs</button>
       <button class="btn btn-danger btn-sm" id="abort-job" disabled>Abort</button>
     </div>
   </div>
@@ -216,6 +227,10 @@ async function loadFarms() {
     if (!r.ok) throw new Error(data.error || 'Failed to load farms');
     farmsData = data.farms;
     $('farm-count').textContent = farmsData.length;
+    const existsCount = farmsData.filter(f => f.dbExists).length;
+    $('sum-total').textContent = String(farmsData.length);
+    $('sum-exists').textContent = String(existsCount);
+    $('sum-missing').textContent = String(farmsData.length - existsCount);
     renderFarms();
     if (data.jobRunning && data.currentJob) {
       currentJob = data.currentJob;
@@ -296,6 +311,35 @@ $('run-all').addEventListener('click', async () => {
   const resume = $('resume-farm').value.trim() || undefined;
   const body = resume ? { resume } : {};
   await postJob('/api/farm/migrate-all', body, resume ? `migrate-all (resume from ${resume})` : 'migrate-all');
+});
+
+$('create-missing-dbs').addEventListener('click', async () => {
+  if (currentJob) return toast('A job is already running', true);
+  try {
+    const r = await fetch('/api/farm/create-missing-dbs', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Create missing DBs failed');
+    const failCount = Array.isArray(data.failed) ? data.failed.length : 0;
+    toast(`Created ${data.created} DB(s), ${data.existed} already existed${failCount ? `, ${failCount} failed` : ''}`, failCount > 0);
+    await loadFarms();
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
+
+$('clear-farm-dbs').addEventListener('click', async () => {
+  if (currentJob) return toast('A job is already running', true);
+  if (!confirm('Drop all farm PostgreSQL databases discovered on this page? This keeps lsj_system and system DBs.')) return;
+  try {
+    const r = await fetch('/api/farm/clear-pg', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Clear farm DBs failed');
+    const failCount = Array.isArray(data.failed) ? data.failed.length : 0;
+    toast(`Dropped ${data.dropped.length} DB(s), ${data.missing.length} already missing${failCount ? `, ${failCount} failed` : ''}`, failCount > 0);
+    await loadFarms();
+  } catch (e) {
+    toast(e.message, true);
+  }
 });
 
 $('abort-job').addEventListener('click', async () => {

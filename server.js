@@ -823,6 +823,17 @@ function listFarms() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function pgMaintenanceConfig() {
+  const cfg = pgConfig();
+  return cfg.connectionString
+    ? (() => {
+        const u = new URL(cfg.connectionString);
+        u.pathname = '/postgres';
+        return { connectionString: u.toString(), max: 1 };
+      })()
+    : { ...cfg, database: 'postgres', max: 1 };
+}
+
 let farmJob = null; // { type, farm, child, log:[] }
 
 function streamChild(type, farm, cmd, args) {
@@ -863,10 +874,7 @@ app.get('/api/farms', async (req, res) => {
 
     // Look up which PG databases exist (best-effort).
     const { Pool } = require('pg');
-    const cfg = pgConfig();
-    const maintCfg = cfg.connectionString
-      ? (() => { const u = new URL(cfg.connectionString); u.pathname = '/postgres'; return { connectionString: u.toString(), max: 1 }; })()
-      : { ...cfg, database: 'postgres', max: 1 };
+    const maintCfg = pgMaintenanceConfig();
     const pool = new Pool(maintCfg);
     let existing = new Set();
     try {
@@ -916,6 +924,94 @@ app.get('/api/farms', async (req, res) => {
     res.json({ farms, jobRunning: !!farmJob, currentJob: farmJob ? { type: farmJob.type, farm: farmJob.farm } : null });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/farm/create-missing-dbs', async (req, res) => {
+  if (farmJob)          return res.status(409).json({ error: `Job already running: ${farmJob.type} ${farmJob.farm}` });
+  if (migrationRunning) return res.status(409).json({ error: 'Migration is running' });
+
+  const { Pool } = require('pg');
+  const pool = new Pool(pgMaintenanceConfig());
+  try {
+    const farms = listFarms();
+    const allSlugs = farms.map(f => f.slug);
+    const existingQ = await pool.query('SELECT datname FROM pg_database WHERE datistemplate = false');
+    const existing = new Set(existingQ.rows.map(r => r.datname));
+
+    let created = 0;
+    const failed = [];
+    for (const slug of allSlugs) {
+      if (existing.has(slug)) continue;
+      try {
+        await pool.query(`CREATE DATABASE "${slug}"`);
+        created++;
+      } catch (e) {
+        failed.push({ db: slug, error: e.message });
+      }
+    }
+
+    res.json({
+      farms: farms.length,
+      created,
+      existed: allSlugs.length - created - failed.length,
+      failed,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    await pool.end().catch(() => {});
+  }
+});
+
+app.post('/api/farm/clear-pg', async (req, res) => {
+  if (farmJob)          return res.status(409).json({ error: `Job already running: ${farmJob.type} ${farmJob.farm}` });
+  if (migrationRunning) return res.status(409).json({ error: 'Migration is running' });
+
+  const { Pool } = require('pg');
+  const pool = new Pool(pgMaintenanceConfig());
+  try {
+    const farms = listFarms();
+    const farmSlugs = farms.map(f => f.slug);
+    const keep = new Set(['postgres', 'template0', 'template1', 'lsj_system']);
+
+    const existingQ = await pool.query('SELECT datname FROM pg_database WHERE datistemplate = false');
+    const existing = new Set(existingQ.rows.map(r => r.datname));
+
+    const dropped = [];
+    const kept = [];
+    const missing = [];
+    const failed = [];
+
+    for (const slug of farmSlugs) {
+      if (keep.has(slug)) {
+        kept.push(slug);
+        continue;
+      }
+      if (!existing.has(slug)) {
+        missing.push(slug);
+        continue;
+      }
+      try {
+        await pool.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [slug]);
+        await pool.query(`DROP DATABASE IF EXISTS "${slug}"`);
+        dropped.push(slug);
+      } catch (e) {
+        failed.push({ db: slug, error: e.message });
+      }
+    }
+
+    res.json({
+      farms: farms.length,
+      dropped,
+      kept,
+      missing,
+      failed,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    await pool.end().catch(() => {});
   }
 });
 
