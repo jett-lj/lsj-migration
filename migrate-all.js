@@ -1,209 +1,200 @@
 #!/usr/bin/env node
 /**
- * Multi-database migration runner.
+ * Multi-farm migration runner — LSJ-HUB system-DB edition.
  *
- * Discovers all CATTLE* databases on the SQL Server, creates corresponding
- * PostgreSQL target databases, and runs the migration on each one sequentially.
+ * Reads the list of active farms from lsj_system.farms, then runs the
+ * migration engine against each farm's PostgreSQL database sequentially.
  *
  * Usage:
- *   node migrate-all.js                  # migrate all discovered databases
- *   node migrate-all.js --dry-run        # preview only (no writes)
- *   node migrate-all.js --filter Barmount  # migrate only matching databases
- *   node migrate-all.js --list           # just list discovered databases, don't migrate
+ *   node migrate-all.js                     # migrate all farms
+ *   node migrate-all.js --dry-run           # list farms, no migration
+ *   node migrate-all.js --farm "Barmount"   # migrate a single named farm
  *
- * Each source DB gets a PG database named after itself (lowercased, sanitised).
- * e.g. CATTLE → cattle, CATTLE_Feed → cattle_feed
+ * Required env vars (MSSQL source):
+ *   MSSQL_HOST, MSSQL_USER, MSSQL_PASSWORD, MSSQL_DATABASE
+ *
+ * Required env vars (system DB — farm registry):
+ *   SYSTEM_DATABASE_URL  e.g. postgres://lsj_admin:lsj_password@localhost:5433/lsj_system
+ *
+ * Per-farm PG target databases use:
+ *   DB_HOST, DB_PORT, DB_USER, DB_PASSWORD  (from env)
+ *   DB_NAME is set per-farm from farms.db_name
  */
 'use strict';
 
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
-const sql           = require('mssql');
-const { Pool }      = require('pg');
-const { fork }      = require('child_process');
-const path          = require('path');
-const { getMssqlConfig } = require('./config');
+const { Pool }          = require('pg');
+const { connectMssql, closePools } = require('./connections');
+const { runMigration }  = require('./runner');
+const { getMigrationOptions } = require('./config');
 
-// ── CLI args ────────────────────────────────────────
+// ── CLI args ─────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { dryRun: false, filter: null, listOnly: false, targetDb: null, extraArgs: [] };
+  const args = { dryRun: false, farmFilter: null };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--dry-run')   args.dryRun = true;
-    else if (a === '--list') args.listOnly = true;
-    else if (a === '--filter' && argv[i + 1]) args.filter = argv[++i];
-    else if (a === '--target-db' && argv[i + 1]) args.targetDb = argv[++i];
-    else args.extraArgs.push(a);          // pass through to migrate.js
+    if (a === '--dry-run') {
+      args.dryRun = true;
+    } else if (a === '--farm' && argv[i + 1]) {
+      args.farmFilter = argv[++i];
+    }
   }
   return args;
 }
 
-// ── Discover source databases ───────────────────────
+// ── System DB: read farms ────────────────────────────
 
-async function discoverDatabases(filter) {
-  const cfg = { ...getMssqlConfig(), database: 'master' };
-  const pool = await new sql.ConnectionPool(cfg).connect();
+async function loadFarms(farmFilter) {
+  const systemUrl = process.env.SYSTEM_DATABASE_URL;
+  if (!systemUrl) {
+    throw new Error('SYSTEM_DATABASE_URL env var is required');
+  }
+
+  const systemPool = new Pool({ connectionString: systemUrl, max: 1 });
   try {
-    const r = await pool.request().query(
-      "SELECT name FROM sys.databases " +
-      "WHERE name NOT IN ('master','tempdb','model','msdb') " +
-      "ORDER BY name"
+    const result = await systemPool.query(
+      'SELECT id, name, db_name FROM farms ORDER BY name'
     );
-    let dbs = r.recordset.map(x => x.name);
-    if (filter) {
-      const pat = filter.toLowerCase();
-      dbs = dbs.filter(d => d.toLowerCase().includes(pat));
+    let farms = result.rows;
+    if (farmFilter) {
+      const needle = farmFilter.toLowerCase();
+      farms = farms.filter(f => f.name.toLowerCase() === needle);
+      if (farms.length === 0) {
+        throw new Error(`No farm found with name "${farmFilter}" in lsj_system.farms`);
+      }
     }
-    return dbs;
+    return farms;
   } finally {
-    await pool.close();
+    await systemPool.end().catch(() => {});
   }
 }
 
-// ── Ensure PG database exists ───────────────────────
+// ── Per-farm PG pool ─────────────────────────────────
+// We create a fresh Pool per farm rather than reusing connectPostgres()
+// because that helper caches a single module-level singleton.
 
-function pgDbName(mssqlName) {
-  // Lowercase, replace non-alphanum with underscore, collapse multiples
-  return mssqlName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-}
-
-async function ensurePgDatabase(dbName) {
-  // Connect to 'postgres' maintenance DB to create the target
-  const adminPool = new Pool({
+function makeFarmPool(dbName) {
+  return new Pool({
     host:     process.env.DB_HOST     || 'localhost',
-    port:     parseInt(process.env.DB_PORT || '5432', 10),
-    user:     process.env.DB_USER     || 'postgres',
-    password: process.env.DB_PASSWORD || '',
-    database: 'postgres',
+    port:     parseInt(process.env.DB_PORT || '5433', 10),
+    user:     process.env.DB_USER     || 'lsj_admin',
+    password: process.env.DB_PASSWORD || 'lsj_password',
+    database: dbName,
+    max:      parseInt(process.env.PG_POOL_MAX || '10', 10),
   });
-  try {
-    const exists = await adminPool.query(
-      'SELECT 1 FROM pg_database WHERE datname = $1', [dbName]
+}
+
+// ── Summary table ────────────────────────────────────
+
+function printSummary(results) {
+  const COL_FARM = 35;
+  const COL_DB   = 35;
+
+  console.log(`\n${'='.repeat(80)}`);
+  console.log('  MIGRATION SUMMARY');
+  console.log(`${'='.repeat(80)}\n`);
+  console.log(
+    'Farm'.padEnd(COL_FARM) +
+    'Database'.padEnd(COL_DB) +
+    'Status'.padEnd(8) +
+    'Duration'
+  );
+  console.log('-'.repeat(80));
+
+  for (const r of results) {
+    const tag   = r.ok ? 'OK' : 'FAILED';
+    const dur   = r.secs != null ? `${r.secs}s` : '-';
+    const note  = r.ok ? '' : `  (${r.error})`;
+    console.log(
+      r.name.padEnd(COL_FARM) +
+      r.db_name.padEnd(COL_DB) +
+      tag.padEnd(8) +
+      dur +
+      note
     );
-    if (exists.rows.length === 0) {
-      // CREATE DATABASE cannot run inside a transaction
-      await adminPool.query(`CREATE DATABASE "${dbName}"`);
-      console.log(`  [+] Created PG database: ${dbName}`);
-    } else {
-      console.log(`  [=] PG database already exists: ${dbName}`);
-    }
-  } finally {
-    await adminPool.end();
   }
+
+  const ok      = results.filter(r => r.ok).length;
+  const failed  = results.filter(r => !r.ok).length;
+  console.log(
+    `\nTotal: ${results.length}  |  OK: ${ok}  |  Failed: ${failed}`
+  );
 }
 
-// ── Run migration as child process ──────────────────
-
-function runMigration(mssqlDb, pgDb, extraArgs, envOverrides = {}) {
-  return new Promise((resolve, reject) => {
-    const args = [...extraArgs, '--'];
-    const env = {
-      ...process.env,
-      MSSQL_DATABASE: mssqlDb,
-      DB_NAME:        pgDb,
-      // Clear any connection string so individual vars take priority
-      PG_CONNECTION_STRING: '',
-      ...envOverrides,
-    };
-    const child = fork(path.join(__dirname, 'migrate.js'), args, {
-      env,
-      stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
-    });
-    child.on('exit', code => {
-      if (code === 0) resolve();
-      else reject(new Error(`migrate.js exited with code ${code}`));
-    });
-    child.on('error', reject);
-  });
-}
-
-// ── Main ────────────────────────────────────────────
+// ── Main ─────────────────────────────────────────────
 
 async function main() {
   const args = parseArgs(process.argv);
 
-  console.log('=== LSJ-HUB Multi-Database Migration ===\n');
+  console.log('=== LSJ-HUB Multi-Farm Migration ===\n');
 
-  const dbs = await discoverDatabases(args.filter);
-  console.log(`Discovered ${dbs.length} database(s):\n`);
-  for (const db of dbs) {
-    const target = args.targetDb || pgDbName(db);
-    console.log(`  ${db}  →  PG: ${target}`);
-  }
-  if (args.targetDb) {
-    console.log(`\n  [--target-db] All sources consolidate into: ${args.targetDb}`);
-  }
+  // Load farm list from system DB
+  const farms = await loadFarms(args.farmFilter);
 
-  if (args.listOnly) {
+  if (farms.length === 0) {
+    console.log('No farms found in lsj_system.farms. Nothing to do.');
     process.exit(0);
   }
 
-  if (dbs.length === 0) {
-    console.log('No databases match. Nothing to do.');
+  console.log(`Found ${farms.length} farm(s):\n`);
+  for (const f of farms) {
+    console.log(`  ${f.name.padEnd(35)} → PG: ${f.db_name}`);
+  }
+
+  if (args.dryRun) {
+    console.log('\n--dry-run specified. No migration performed.');
     process.exit(0);
   }
 
   console.log('');
 
-  const results = [];
-  const passthrough = [...args.extraArgs];
-  if (args.dryRun) passthrough.push('--dry-run');
-
-  // When --target-db is set, all source DBs consolidate into one PG database
-  if (args.targetDb && !args.dryRun) {
-    await ensurePgDatabase(args.targetDb);
+  // Connect once to MSSQL — shared across all farm runs
+  let mssqlPool;
+  try {
+    mssqlPool = await connectMssql();
+    console.log('[INFO] Connected to SQL Server.\n');
+  } catch (err) {
+    console.error('[FATAL] Cannot connect to SQL Server:', err.message);
+    process.exit(1);
   }
 
-  for (let i = 0; i < dbs.length; i++) {
-    const mssqlDb = dbs[i];
-    const pgDb    = args.targetDb || pgDbName(mssqlDb);
+  const migrationOpts = getMigrationOptions();
+  const results       = [];
 
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`  [${i + 1}/${dbs.length}] ${mssqlDb} → ${pgDb}`);
-    console.log(`${'═'.repeat(60)}\n`);
+  for (let i = 0; i < farms.length; i++) {
+    const farm = farms[i];
+    const t0   = Date.now();
 
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`  [${i + 1}/${farms.length}]  ${farm.name}  →  ${farm.db_name}`);
+    console.log(`${'='.repeat(70)}\n`);
+
+    const pgPool = makeFarmPool(farm.db_name);
     try {
-      if (!args.dryRun && !args.targetDb) {
-        await ensurePgDatabase(pgDb);
-      }
-
-      // In --target-db mode: first DB truncates normally; subsequent DBs
-      // must NOT truncate (would wipe data from prior sources) and should
-      // skip FK restore (next source would need to drop them again anyway).
-      const envOverrides = {};
-      if (args.targetDb && i > 0) {
-        envOverrides.SKIP_TRUNCATE = '1';
-      }
-      if (args.targetDb && i < dbs.length - 1) {
-        envOverrides.SKIP_FK_RESTORE = '1';
-      }
-
-      await runMigration(mssqlDb, pgDb, passthrough, envOverrides);
-      results.push({ db: mssqlDb, status: 'OK' });
-      console.log(`\n  ✓ ${mssqlDb} completed successfully.`);
+      await runMigration(mssqlPool, pgPool, migrationOpts);
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(`\n  [OK] ${farm.name} completed in ${secs}s`);
+      results.push({ name: farm.name, db_name: farm.db_name, ok: true, secs });
     } catch (err) {
-      results.push({ db: mssqlDb, status: 'FAILED', error: err.message });
-      console.error(`\n  ✗ ${mssqlDb} FAILED: ${err.message}`);
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      console.error(`\n  [FAIL] ${farm.name} failed after ${secs}s: ${err.message}`);
+      results.push({ name: farm.name, db_name: farm.db_name, ok: false, secs, error: err.message });
+    } finally {
+      await pgPool.end().catch(() => {});
     }
   }
 
-  // Final summary
-  console.log(`\n${'═'.repeat(60)}`);
-  console.log('  FINAL SUMMARY');
-  console.log(`${'═'.repeat(60)}\n`);
-  console.log('Database'.padEnd(35) + 'Status');
-  console.log('-'.repeat(50));
-  for (const r of results) {
-    console.log(r.db.padEnd(35) + r.status);
-  }
+  // Always close the shared MSSQL pool
+  await closePools().catch(() => {});
 
-  const failed = results.filter(r => r.status === 'FAILED');
-  if (failed.length) {
-    console.log(`\n${failed.length} database(s) FAILED.`);
+  printSummary(results);
+
+  const failed = results.filter(r => !r.ok);
+  if (failed.length > 0) {
     process.exit(1);
   } else {
-    console.log(`\nAll ${results.length} database(s) migrated successfully.`);
     process.exit(0);
   }
 }
