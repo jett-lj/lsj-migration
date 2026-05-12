@@ -15,6 +15,7 @@
     "migrate:audit": "node migrate.js --audit",
     "migrate:validate": "node migrate.js --validate",
     "migrate:reconcile": "node migrate.js --reconcile",
+    "migrate:reconcile:json": "node migrate.js --reconcile --output reconcile-report.json",
     "ui": "node server.js",
     "audit": "node _audit_source.js",
     "test": "jest --forceExit --detectOpenHandles"

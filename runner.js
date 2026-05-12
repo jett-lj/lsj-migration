@@ -28,6 +28,115 @@ function createLogger(level) {
   };
 }
 
+// ── Progress reporter ────────────────────────────────
+// Real-time per-table progress output.
+// - TTY mode: updates a single line in-place using \r
+// - Non-TTY mode (piped output): emits a log line every ~5% or every 20 batches
+//
+// Usage:
+//   const pr = createProgressReporter('Drugs_Given', 453847);
+//   pr.update(batchRowsProcessed);  // call after each batch
+//   pr.finish(rowsWritten);         // call when table is done
+
+const PROGRESS_ROLLING_WINDOW = 10; // number of batches to average for rows/sec
+
+function createProgressReporter(tableName, totalRows) {
+  const isTTY = !!process.stdout.isTTY;
+  const startTime = Date.now();
+  let rowsProcessed = 0;
+
+  // Rolling window for ETA: store timestamps of the last N batches
+  const batchTimes  = []; // array of { ts: Date.now(), rows: N }
+
+  function fmtNum(n) {
+    return Number(n).toLocaleString('en');
+  }
+
+  function fmtDuration(seconds) {
+    const s = Math.round(seconds);
+    if (s < 60)  return `${s}s`;
+    if (s < 3600) {
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      return r > 0 ? `${m}m ${r}s` : `${m}m`;
+    }
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+
+  function buildLine() {
+    const pct    = totalRows > 0 ? Math.min(100, (rowsProcessed / totalRows) * 100) : null;
+    const pctStr = pct !== null ? `${pct.toFixed(1)}%` : '?%';
+
+    // Rolling rows/sec from the last PROGRESS_ROLLING_WINDOW batches
+    let rowsPerSec = 0;
+    if (batchTimes.length >= 2) {
+      const window = batchTimes.slice(-PROGRESS_ROLLING_WINDOW);
+      const elapsed = (window[window.length - 1].ts - window[0].ts) / 1000;
+      const windowRows = window.slice(1).reduce((s, b) => s + b.rows, 0);
+      rowsPerSec = elapsed > 0 ? windowRows / elapsed : 0;
+    } else if (batchTimes.length === 1) {
+      const elapsed = (Date.now() - startTime) / 1000;
+      rowsPerSec = elapsed > 0 ? rowsProcessed / elapsed : 0;
+    }
+
+    const rpsStr = rowsPerSec > 0 ? `${fmtNum(Math.round(rowsPerSec))} rows/s` : null;
+
+    let etaStr = null;
+    if (rowsPerSec > 0 && totalRows > 0 && rowsProcessed < totalRows) {
+      const remaining = (totalRows - rowsProcessed) / rowsPerSec;
+      etaStr = `ETA ${fmtDuration(remaining)}`;
+    }
+
+    const parts = [`Migrating ${tableName}... ${fmtNum(rowsProcessed)}`];
+    if (totalRows > 0) parts[0] += ` / ${fmtNum(totalRows)} (${pctStr})`;
+    if (rpsStr)  parts.push(rpsStr);
+    if (etaStr)  parts.push(etaStr);
+
+    return parts.join(' — '); // em dash
+  }
+
+  // For non-TTY: track what we last logged to avoid duplicate lines
+  let lastLoggedPct = -1;
+  let batchCount = 0;
+
+  function update(batchRows) {
+    if (batchRows <= 0) return;
+    rowsProcessed += batchRows;
+    batchCount++;
+    batchTimes.push({ ts: Date.now(), rows: batchRows });
+    // Keep the array bounded
+    if (batchTimes.length > PROGRESS_ROLLING_WINDOW + 2) batchTimes.shift();
+
+    if (isTTY) {
+      process.stdout.write('\r' + buildLine());
+    } else {
+      // Non-TTY: log every 5% change or every 20 batches
+      const pct = totalRows > 0 ? Math.min(100, Math.floor((rowsProcessed / totalRows) * 100)) : -1;
+      const pctBucket = Math.floor(pct / 5);
+      if (pctBucket > Math.floor(lastLoggedPct / 5) || batchCount % 20 === 0) {
+        lastLoggedPct = pct;
+        console.log('[PROGRESS] ' + buildLine());
+      }
+    }
+  }
+
+  function finish(rowsWritten) {
+    const elapsed = (Date.now() - startTime) / 1000;
+
+    if (isTTY) {
+      // Clear the in-place line then print the final summary with a newline
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 100) + '\r');
+    }
+    const count       = rowsWritten != null ? rowsWritten : rowsProcessed;
+    const durationStr = fmtDuration(elapsed);
+    console.log(`✓ ${tableName}: ${fmtNum(count)} rows in ${durationStr}`);
+  }
+
+  return { update, finish };
+}
+
 // ── Skip reporter ────────────────────────────────────
 // Emits structured lines that server.js parses into SSE skip-row events
 // so the UI can show what was skipped and why. Capped per (table,reason)
@@ -132,6 +241,8 @@ async function mapWithConcurrency(items, limit, worker) {
  * @returns {{ results: Array<{ table, rowsRead, rowsWritten, rowsSkipped, rowsErrored, status, error? }> }}
  */
 async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
+  const _runStart = Date.now();
+
   // Normalise: accept either a single pool (legacy) or a { dbName: pool } map
   const mssqlPools = (mssqlPoolOrPools && typeof mssqlPoolOrPools.request === 'function')
     ? { [process.env.MSSQL_DATABASE || 'CATTLE']: mssqlPoolOrPools }
@@ -402,6 +513,27 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
     await resetSequences(pgPool, log);
   }
 
+  // ── Migration summary ─────────────────────────────────────────────────────
+  const totalRowsWritten = results.reduce((s, r) => s + (r.rowsWritten || 0), 0);
+  const totalTables      = results.length;
+  const completedTables  = results.filter(r => r.status === 'completed').length;
+  const failedTables     = results.filter(r => r.status === 'failed').length;
+  const totalElapsedSec  = (Date.now() - _runStart) / 1000;
+
+  const _fmtDur = (sec) => {
+    const s = Math.round(sec);
+    if (s < 60)   return `${s}s`;
+    if (s < 3600) { const m = Math.floor(s / 60), r = s % 60; return r > 0 ? `${m}m ${r}s` : `${m}m`; }
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  };
+
+  console.log(
+    `\nSummary: ${Number(totalRowsWritten).toLocaleString('en')} rows across ` +
+    `${completedTables}/${totalTables} tables in ${_fmtDur(totalElapsedSec)}` +
+    (failedTables > 0 ? ` (${failedTables} failed)` : '')
+  );
+
   return { results };
 }
 
@@ -517,6 +649,9 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
 
     log.info(`  ${sourceTable}: ${totalRows > 0 ? totalRows.toLocaleString() : 'unknown'} rows to process`);
 
+    // Create progress reporter (TTY: in-place updates; non-TTY: periodic log lines)
+    const progress = createProgressReporter(sourceTable, totalRows > 0 ? totalRows : 0);
+
     // Stream rows from MSSQL in a single query (avoids O(n²) OFFSET re-scan on large tables).
     // The pool's `stream` flag is enabled per-request; rows arrive incrementally and we
     // flush batches of `batchSize` to PG as they fill, pausing the stream for backpressure.
@@ -541,15 +676,8 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
         log.warn(`  [${sourceTable}] slow batch write: ${(flushMs / 1000).toFixed(1)}s for ${rows.length} rows at offset ${offset.toLocaleString()}`);
       }
 
-      if (totalRows > 0) {
-        const pct     = Math.min(100, Math.round(100 * offset / totalRows));
-        const prevPct = Math.min(100, Math.round(100 * (offset - rows.length) / totalRows));
-        if (Math.floor(pct / 5) > Math.floor(prevPct / 5)) {
-          log.info(`  [${sourceTable}] ${offset.toLocaleString()}/${totalRows.toLocaleString()} (${pct}%)`);
-        }
-      } else if (offset % (batchSize * 20) < batchSize) {
-        log.info(`  [${sourceTable}] ${offset.toLocaleString()} rows processed`);
-      }
+      // Update in-place progress line (or emit a log line if not a TTY)
+      progress.update(rows.length);
     };
 
     await new Promise((resolve, reject) => {
@@ -591,6 +719,8 @@ async function migrateTable(mssqlPool, pgPool, mapping, { batchSize, log, dryRun
     });
 
     stats.status = (stats.rowsRead > 0 && stats.rowsWritten === 0 && stats.rowsErrored > 0) ? 'failed' : 'completed';
+    // Print final completion line (clears the in-place TTY line, or logs a summary in non-TTY)
+    progress.finish(stats.rowsWritten);
     log.info(`  Done: ${stats.rowsWritten} written, ${stats.rowsSkipped} skipped, ${stats.rowsErrored} errored`);
     if (stats._orphaned > 0) {
       log.info(`  ${stats._orphaned.toLocaleString()} orphaned rows (missing FK) → system.legacy_raw as ${sourceTable}_orphaned`);
@@ -1683,6 +1813,73 @@ async function migrateRawTables(mssqlPool, pgPool, opts = {}) {
   return results;
 }
 
+// ── Per-farm reconciliation ──────────────────────────
+
+/**
+ * Reconcile a single farm: compare MSSQL source row counts against PostgreSQL
+ * target row counts for every mapped and raw table.
+ *
+ * @param {string} farmName         - display name for the farm (e.g. "MyrtlevaleFarm")
+ * @param {object} pgPool           - connected pg Pool for this farm's database
+ * @param {object} mssqlPool        - connected mssql pool for this farm's CATTLE database
+ * @returns {{ farm: string, tables: Array, allMatch: boolean }}
+ */
+async function reconcileFarm(farmName, pgPool, mssqlPool) {
+  const { raw } = getCategorySummary();
+  const tables = [];
+
+  // Mapped tables
+  for (const m of mappings) {
+    try {
+      const srcRes = await mssqlPool.request().query(
+        `SELECT COUNT(*) AS cnt FROM [dbo].[${m.sourceTable}]`
+      );
+      const tgtRes = await pgPool.query(
+        `SELECT COUNT(*) AS cnt FROM ${m.targetTable}`
+      );
+      const source = srcRes.recordset[0].cnt;
+      const target = parseInt(tgtRes.rows[0].cnt);
+      const delta  = source - target;
+      tables.push({ table: m.sourceTable, source, target, delta, match: delta === 0 });
+    } catch (err) {
+      // Source table may not exist on this farm — treat as a match of 0 rows
+      const missing = /Invalid object name|does not exist/i.test(err.message);
+      if (missing) {
+        tables.push({ table: m.sourceTable, source: 0, target: 0, delta: 0, match: true, note: 'table absent on farm' });
+      } else {
+        tables.push({ table: m.sourceTable, source: -1, target: -1, delta: 0, match: false, error: err.message });
+      }
+    }
+  }
+
+  // Raw tables (preserved as JSONB in system.legacy_raw)
+  for (const tableName of raw) {
+    try {
+      const srcRes = await mssqlPool.request().query(
+        `SELECT COUNT(*) AS cnt FROM [dbo].[${tableName}]`
+      );
+      const tgtRes = await pgPool.query(
+        `SELECT COUNT(*) AS cnt FROM system.legacy_raw WHERE source_table = $1`,
+        [tableName]
+      );
+      const source = srcRes.recordset[0].cnt;
+      const target = parseInt(tgtRes.rows[0].cnt);
+      const delta  = source - target;
+      tables.push({ table: tableName, source, target, delta, match: delta === 0 });
+    } catch (err) {
+      const missing = /Invalid object name|does not exist/i.test(err.message);
+      if (missing) {
+        tables.push({ table: tableName, source: 0, target: 0, delta: 0, match: true, note: 'table absent on farm' });
+      } else {
+        tables.push({ table: tableName, source: -1, target: -1, delta: 0, match: false, error: err.message });
+      }
+    }
+  }
+
+  const allMatch = tables.every(t => t.match);
+  return { farm: farmName, tables, allMatch };
+}
+
 // ── Reconciliation report ────────────────────────────
 
 /**
@@ -1962,6 +2159,7 @@ module.exports = {
   preFlightAudit,
   migrateRawTables,
   reconciliationReport,
+  reconcileFarm,
   compareDatabases,
   buildLookup,
   buildCowIdMap,
@@ -1970,4 +2168,5 @@ module.exports = {
   buildLookupFromSource,
   buildIdSetFromSource,
   createLogger,
+  createProgressReporter,
 };

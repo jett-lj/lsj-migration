@@ -8,7 +8,9 @@
  *   node migrate.js --tables Breeds,Cattle   # migrate specific mapped tables
  *   node migrate.js --validate      # run post-migration validation only
  *   node migrate.js --audit         # pre-flight source audit (row counts + coverage)
- *   node migrate.js --reconcile     # post-migration reconciliation report
+ *   node migrate.js --reconcile     # per-farm reconciliation report
+ *   node migrate.js --reconcile --farm MyrtlevaleFarm   # reconcile named farm
+ *   node migrate.js --reconcile --output report.json   # write JSON report to file
  *   node migrate.js --batch-size 1000
  *
  * Required env vars:
@@ -20,7 +22,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const { connectMssql, connectPostgres, closePools } = require('./connections');
-const { runMigration, validateMigration, validateMappings, preFlightAudit, migrateRawTables, reconciliationReport } = require('./runner');
+const { runMigration, validateMigration, validateMappings, preFlightAudit, migrateRawTables, reconciliationReport, reconcileFarm } = require('./runner');
 const { getMssqlConfig, getMigrationOptions } = require('./config');
 const { getCategorySummary } = require('./categories');
 const sql  = require('mssql');
@@ -30,7 +32,7 @@ const path = require('path');
 // ── Parse CLI args ──────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { dryRun: false, tables: null, validateOnly: false, auditOnly: false, reconcileOnly: false, checkMappings: false, batchSize: null };
+  const args = { dryRun: false, tables: null, validateOnly: false, auditOnly: false, reconcileOnly: false, checkMappings: false, batchSize: null, farm: null, output: null };
 
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
@@ -44,6 +46,12 @@ function parseArgs(argv) {
     }
     else if (arg === '--batch-size' && argv[i + 1]) {
       args.batchSize = parseInt(argv[++i], 10);
+    }
+    else if (arg === '--farm' && argv[i + 1]) {
+      args.farm = argv[++i];
+    }
+    else if (arg === '--output' && argv[i + 1]) {
+      args.output = argv[++i];
     }
   }
 
@@ -339,26 +347,69 @@ async function main() {
   }
 
   if (cliArgs.reconcileOnly) {
-    // Reconciliation report
-    console.log('\n--- Post-Migration Reconciliation Report ---\n');
-    const rows = await reconciliationReport(mssqlPool, pgPool);
-    console.log('Source'.padEnd(40) + 'Target'.padEnd(20) + 'Type'.padEnd(10) +
-                'Src'.padStart(10) + 'Tgt'.padStart(10) + 'Delta'.padStart(8) + '  Match');
-    console.log('-'.repeat(105));
+    // Per-farm reconciliation report
+    // Determine which farms to reconcile.
+    // --farm <name>  → single farm (uses current connections, farm name from arg)
+    // (default)      → single farm using current connections, named from MSSQL_DATABASE env
+    const farmName = cliArgs.farm || process.env.MSSQL_DATABASE || process.env.MSSQL_HOST || 'default';
 
-    let allMatch = true;
-    for (const r of rows) {
-      const matchIcon = r.match ? 'YES' : 'NO';
-      if (!r.match) allMatch = false;
+    console.log(`\n--- Per-Farm Reconciliation Report ---\n`);
+    console.log(`Farm: ${farmName}`);
+
+    const farmResult = await reconcileFarm(farmName, pgPool, mssqlPool);
+
+    // Print table breakdown
+    const COL_TABLE  = 25;
+    const COL_NUM    = 10;
+    console.log(
+      '\n  ' + 'Table'.padEnd(COL_TABLE) +
+      'Source'.padStart(COL_NUM) +
+      'Target'.padStart(COL_NUM) +
+      'Delta'.padStart(COL_NUM) +
+      '  Status'
+    );
+    console.log('  ' + '-'.repeat(COL_TABLE + COL_NUM * 3 + 10));
+
+    for (const t of farmResult.tables) {
+      // Skip tables that are absent on this farm (0/0 match) to keep output concise
+      if (t.note === 'table absent on farm') continue;
+
+      const status = t.error
+        ? `ERROR: ${t.error}`
+        : t.match
+          ? '✓ MATCH'
+          : '✗ MISMATCH';
       console.log(
-        r.source.padEnd(40) + r.target.padEnd(20) + r.strategy.padEnd(10) +
-        String(r.sourceRows).padStart(10) + String(r.targetRows).padStart(10) +
-        String(r.delta).padStart(8) + `  ${matchIcon}`
+        '  ' + t.table.padEnd(COL_TABLE) +
+        String(t.source).padStart(COL_NUM) +
+        String(t.target).padStart(COL_NUM) +
+        String(t.delta).padStart(COL_NUM) +
+        `  ${status}`
       );
     }
-    console.log(allMatch ? '\nAll tables reconciled.' : '\nSome tables have mismatches.');
+
+    const presentTables = farmResult.tables.filter(t => t.note !== 'table absent on farm');
+    const mismatches    = presentTables.filter(t => !t.match);
+    console.log(`\n  ${presentTables.length} tables checked, ${mismatches.length} mismatch(es).`);
+    console.log(farmResult.allMatch ? '\nAll tables reconciled.' : '\nSome tables have mismatches.');
+
+    // JSON output
+    if (cliArgs.output) {
+      const report = {
+        timestamp: new Date().toISOString(),
+        farms: [farmResult],
+        summary: {
+          farms: 1,
+          matching: farmResult.allMatch ? 1 : 0,
+          mismatching: farmResult.allMatch ? 0 : 1,
+        },
+      };
+      fs.writeFileSync(cliArgs.output, JSON.stringify(report, null, 2), 'utf8');
+      console.log(`\n[INFO] JSON report written to ${cliArgs.output}`);
+    }
+
     await closePools();
-    process.exit(allMatch ? 0 : 1);
+    process.exit(farmResult.allMatch ? 0 : 1);
   }
 
   // Run migration
