@@ -16,6 +16,7 @@
     "migrate:validate": "node migrate.js --validate",
     "migrate:reconcile": "node migrate.js --reconcile",
     "ui": "node server.js",
+    "audit": "node _audit_source.js",
     "test": "jest --forceExit --detectOpenHandles"
   },
   "dependencies": {
