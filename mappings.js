@@ -1166,16 +1166,24 @@ const mappings = [
   },
 
   {
+    // RationNames is the cattle-app simple ration list; Ration_Descriptions
+    // (order 15) is the feedsystem detailed table. Both consolidate into
+    // feed.rations. RationNames runs first with synthetic ration_codes
+    // (offset 20000+) so feedsystem codes from Ration_Descriptions don't
+    // collide. Duplicates by ration_name are tolerated — users dedupe in-app.
     order: 10,
     sourceTable: 'RationNames',
     targetTable: 'feed.rations',
-    query: `SELECT Ration_name, ValuePerTon, Notes, Custom_feed_charge_ton
+    query: `SELECT
+              Ration_name, ValuePerTon, Notes, Custom_feed_charge_ton,
+              CAST(ROW_NUMBER() OVER (ORDER BY Ration_name) + 20000 AS smallint) AS synth_code
             FROM dbo.RationNames
             ORDER BY Ration_name`,
     columns: [
-      { source: 'Ration_name', target: 'ration_name', transform: trimOrNull },
-      { source: 'ValuePerTon', target: 'valueperton', transform: toNum },
-      { source: 'Notes', target: 'notes', transform: trimOrNull },
+      { source: 'synth_code',             target: 'ration_code',            transform: toNum },
+      { source: 'Ration_name',            target: 'ration_name',            transform: trimOrNull },
+      { source: 'ValuePerTon',            target: 'valueperton',            transform: toNum },
+      { source: 'Notes',                  target: 'notes',                  transform: trimOrNull },
       { source: 'Custom_feed_charge_ton', target: 'custom_feed_charge_ton', transform: toNum },
     ],
   },
@@ -3088,10 +3096,12 @@ const mappings = [
   // ── Order 15: Reference tables (light dependencies) ─────────
 
   {
+    // Feedsystem ration master — primary source of nutritional/cost data.
+    // Consolidates into feed.rations alongside cattle-app RationNames (order 10).
     order: 15,
     sourceTable: 'Ration_Descriptions',
     sourceDatabase: 'CATTLE_feed',
-    targetTable: 'feed.ration_descriptions',
+    targetTable: 'feed.rations',
     query: `SELECT Ration_Code, Ration_Name, Ration_Type, Dry_Matter_Pcnt, Current_Value_Kg
             FROM dbo.Ration_Descriptions ORDER BY Ration_Code`,
     columns: [
@@ -3830,15 +3840,15 @@ const mappings = [
       { source: 'Load_Numb_for_Day',          target: 'load_numb_for_day',          transform: toNum },
       { source: 'Pen_Number_ID',              target: 'pen_number_id',              transform: toNum },
       { source: 'Mob_Name',                   target: 'mob_name',                   transform: trimOrNull },
-      { source: 'Number_Cattle',              target: 'number_cattle',              transform: toNum },
-      { source: 'Feed_Weight',                target: 'feed_weight',                transform: toNum },
+      { source: 'Number_Cattle',              target: 'head_fed',                   transform: toNum },
+      { source: 'Feed_Weight',                target: 'kgs_fed',                    transform: toNum },
       { source: 'Time_Fed',                   target: 'time_fed',                   transform: trimOrNull },
       { source: 'Load_RecID',                 target: 'load_recid',                 transform: toNum },
       { source: 'System_User_ID',             target: 'system_user_id',             transform: toNum },
       { source: 'Applied_to_Cattle',          target: 'applied_to_cattle',          transform: toBool },
       { source: 'ID',                         target: 'id' },
       { source: 'Ration_Code',                target: 'ration_code',                transform: toNum },
-      { source: 'Ration_Value_per_Ton',       target: 'ration_value_per_ton',       transform: toNum },
+      { source: 'Ration_Value_per_Ton',       target: 'cost_per_tonne',             transform: toNum },
       { source: 'Call_Wght',                  target: 'call_wght',                  transform: toNum },
       { source: 'Batch_Number',               target: 'batch_number',               transform: toNum },
       { source: 'Postpone_Feed_Application',  target: 'postpone_feed_application',  transform: toBool },

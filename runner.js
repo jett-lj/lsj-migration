@@ -1355,11 +1355,11 @@ async function validateMigration(mssqlPool, pgPool) {
 
   // 2. Referential integrity checks
   const fkChecks = [
-    { table: 'weighing.weighing_events', fk: 'beastid',     ref: 'cattle.cows', refCol: 'id' },
-    { table: 'pen.penshistory',          fk: 'beastid',     ref: 'cattle.cows', refCol: 'id' },
-    { table: 'health.drugs_given',       fk: 'beastid',     ref: 'cattle.cows', refCol: 'id' },
+    { table: 'weighing.weighing_events', fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
+    { table: 'pen.penshistory',          fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
+    { table: 'health.drugs_given',       fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
     { table: 'health.drugs_given',       fk: 'drug_id',     ref: 'health.drugs',  refCol: 'drug_id' },
-    { table: 'finance.costs',            fk: 'beastid',     ref: 'cattle.cows', refCol: 'id' },
+    { table: 'finance.costs',            fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
     { table: 'health.sick_beast_records', fk: 'beast_id',   ref: 'cattle.cows', refCol: 'id' },
     { table: 'purchasing.purchase_lots', fk: 'vendor_id',   ref: 'contacts.contacts', refCol: 'contact_id' },
     { table: 'purchasing.purchase_lots', fk: 'agent_code',  ref: 'contacts.contacts', refCol: 'contact_id' },
@@ -1420,10 +1420,10 @@ async function validateMigration(mssqlPool, pgPool) {
 
   // 5. cow_id populated on all child tables (no NULLs where beast FK exists)
   const cowIdChecks = [
-    { table: 'weighing.weighing_events', beastCol: 'beastid' },
-    { table: 'pen.penshistory',          beastCol: 'beastid' },
-    { table: 'health.drugs_given',       beastCol: 'beastid' },
-    { table: 'finance.costs',            beastCol: 'beastid' },
+    { table: 'weighing.weighing_events', beastCol: 'beast_id' },
+    { table: 'pen.penshistory',          beastCol: 'beast_id' },
+    { table: 'health.drugs_given',       beastCol: 'beast_id' },
+    { table: 'finance.costs',            beastCol: 'beast_id' },
     { table: 'health.sick_beast_records', beastCol: 'beast_id' },
     { table: 'carcase.carcase_data',     beastCol: 'beast_id' },
     { table: 'health.autopsy_records',   beastCol: 'beast_id' },

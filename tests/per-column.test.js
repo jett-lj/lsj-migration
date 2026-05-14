@@ -935,7 +935,7 @@ describe('Per-table column integration', () => {
 
   // ── Ration_Descriptions ───────────────────────────
   it('Ration_Descriptions — all key columns round-trip', async () => {
-    const { rows } = await pgPool.query("SELECT * FROM feed.ration_descriptions WHERE ration_name = 'Starter'");
+    const { rows } = await pgPool.query("SELECT * FROM feed.rations WHERE ration_name = 'Starter'");
     expect(rows).toHaveLength(1);
     const r = rows[0];
     expect(r.ration_code).toBe(1);

@@ -761,7 +761,8 @@ CREATE INDEX IF NOT EXISTS idx_sick_beast_date ON health.sick_beast_records(date
 -- drugs_given (V2: 17 clients — PARTITIONED by date_given)
 CREATE TABLE IF NOT EXISTS health.drugs_given (
   id                   SERIAL NOT NULL,
-  cow_id               INTEGER,
+  cow_id               INTEGER,             -- OG FK (→ cattle.cows)
+  beast_id             INTEGER,             -- V2 legacy FK (CFR BeastID, preserved for ETL)
   ear_tag_no           TEXT,
   drug_id              INTEGER,
   batch_no             TEXT,
@@ -1117,38 +1118,63 @@ CREATE TABLE IF NOT EXISTS feed.ration_types (
   updated_at      TIMESTAMPTZ
 );
 
--- ration_descriptions (V2: 17 clients — ration definitions)
-CREATE TABLE IF NOT EXISTS feed.ration_descriptions (
-  ration_code      SMALLINT PRIMARY KEY,
-  ration_name      TEXT NOT NULL,
-  ration_type      SMALLINT REFERENCES feed.ration_types(ration_type_id),
-  dry_matter_pcnt  NUMERIC(5,2),
-  megajoules_per_kg_dm NUMERIC(10,4),
-  nep             NUMERIC(10,4),
-  prot_pcnt       NUMERIC(5,2),
-  fat_pcnt        NUMERIC(5,2),
-  fibre_pcnt      NUMERIC(5,2),
-  cost_per_tonne  NUMERIC(12,2),
-  titration_start_trough_weight NUMERIC(10,2),
-  category        TEXT,
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ
-);
-
--- rations (OG web-app — simplified ration master used by routes/services)
+-- rations (single unified ration master — merged from legacy CFR Ration_Descriptions + RationNames)
+-- ration_code SMALLINT is the legacy CFR identifier, referenced by penfeedsdata/truck_loads/etc.
+-- id SERIAL is the OG-style surrogate key, referenced by pen.pens / ration_versions / transition steps.
 CREATE TABLE IF NOT EXISTS feed.rations (
-  id             SERIAL PRIMARY KEY,
-  name           TEXT NOT NULL UNIQUE,
-  cost_per_ton   NUMERIC(12,2),
-  dm_percentage  NUMERIC(5,2),
-  active         BOOLEAN DEFAULT TRUE,
-  created_at     TIMESTAMPTZ DEFAULT NOW()
+  id                              SERIAL PRIMARY KEY,
+  ration_code                     SMALLINT UNIQUE NOT NULL,
+  ration_name                     TEXT NOT NULL,
+  ration_type                     SMALLINT REFERENCES feed.ration_types(ration_type_id),
+  category                        TEXT,
+  -- Operational state
+  active                          BOOLEAN NOT NULL DEFAULT TRUE,
+  superceeded                     BOOLEAN DEFAULT FALSE,
+  -- Nutritional / formulation
+  dry_matter_pcnt                 NUMERIC(5,2),
+  megajoules_per_kg_dm            NUMERIC(10,4),
+  nep                             NUMERIC(10,4),
+  prot_pcnt                       NUMERIC(5,2),
+  fat_pcnt                        NUMERIC(5,2),
+  fibre_pcnt                      NUMERIC(5,2),
+  nem_kg                          REAL,
+  mmef                            NUMERIC(4,2),
+  -- Cost
+  cost_per_tonne                  NUMERIC(12,2),
+  valueperton                     NUMERIC(12,4),
+  current_value_kg                NUMERIC(12,4),
+  custom_feed_charge_ton          NUMERIC(12,4),
+  custom_feed_markup_doll_per_ton NUMERIC(12,4),
+  custom_pcnt_markup              REAL,
+  micro_nutrient_cost_per_ton     NUMERIC(12,4),
+  delivered_to_bunk_cost_per_ton  NUMERIC(12,4),
+  interest_cost_per_ton           NUMERIC(12,4),
+  minimum_ration_value_ton        NUMERIC(12,4),
+  -- Mill / mixing
+  mixing_time                     VARCHAR(6),
+  ration_density                  REAL,
+  ration_colour                   VARCHAR(15),
+  stationary_mixer                BOOLEAN,
+  liquids_premix_ration           BOOLEAN,
+  pcnt_feedweight_tolerance       REAL,
+  -- Misc
+  notes                           VARCHAR(50),
+  withhold_days                   INTEGER,
+  zonename                        VARCHAR(3),
+  titration_start_trough_weight   NUMERIC(10,2),
+  -- Timestamps
+  date_ration_created             DATE,
+  date_last_modified              DATE,
+  created_at                      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at                      TIMESTAMPTZ
 );
+COMMENT ON COLUMN feed.rations.mmef IS 'Multiple of Maintenance Energy Factor (e.g. 2.0–3.5×). AU industry convention; per-ration metadata.';
+CREATE INDEX IF NOT EXISTS idx_rations_ration_code ON feed.rations(ration_code);
 
 -- ration_recipe_records (V2: 17 clients — recipe ingredients)
 CREATE TABLE IF NOT EXISTS feed.ration_recipe_records (
   id              SERIAL PRIMARY KEY,
-  ration_code     SMALLINT REFERENCES feed.ration_descriptions(ration_code),
+  ration_code     SMALLINT REFERENCES feed.rations(ration_code),
   commodity_code  SMALLINT,
   pcnt_of_ration  NUMERIC(5,2),
   commodity_name  TEXT,
@@ -1254,6 +1280,27 @@ CREATE TABLE IF NOT EXISTS feed.bunk_readings (
   created_at         TIMESTAMPTZ DEFAULT NOW(),
   updated_at         TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS feed.bunk_call_settings (
+  id                       SERIAL PRIMARY KEY,
+  threshold_under_kg       NUMERIC(8,2),
+  threshold_slick_kg       NUMERIC(8,2),
+  threshold_dry_kg         NUMERIC(8,2),
+  head_count_source        TEXT,
+  variation_tolerance_pct  NUMERIC(6,2),
+  default_session          TEXT,
+  rounding_kg              NUMERIC(8,2),
+  default_mmef             NUMERIC(8,4),
+  use_bunk_scoring         BOOLEAN,
+  show_window_7d           BOOLEAN,
+  show_window_14d          BOOLEAN,
+  show_window_30d          BOOLEAN,
+  threshold_unit           TEXT,
+  show_row_tabs            BOOLEAN,
+  updated_at               TIMESTAMPTZ,
+  updated_by               INTEGER
+);
+INSERT INTO feed.bunk_call_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 
 -- feeding_details (V2: 17 clients — load-level detail, consolidated from 5 feeding program tables)
 CREATE TABLE IF NOT EXISTS feed.feeding_details (
@@ -1597,7 +1644,7 @@ CREATE TABLE IF NOT EXISTS pen.pens (
   mob_name                      TEXT,
   current_head                  INTEGER DEFAULT 0,
   -- Ration
-  ration_id                     INTEGER,           -- OG FK (→ feed.rations)
+  ration_id                     INTEGER,           -- FK → feed.rations(id)
   current_ration_code           SMALLINT,          -- V2 legacy ration code
   ration_code_pm                SMALLINT,          -- V2 PM ration
   kgs_head                      NUMERIC(10,2),
@@ -1623,6 +1670,32 @@ CREATE TABLE IF NOT EXISTS pen.pens (
 );
 CREATE INDEX IF NOT EXISTS idx_pens_name ON pen.pens(name);
 CREATE INDEX IF NOT EXISTS idx_pens_ration ON pen.pens(ration_id);
+
+-- bunk_route — per-session pen visiting order
+CREATE TABLE IF NOT EXISTS pen.bunk_route (
+    session_type TEXT    NOT NULL CHECK (session_type IN ('AM','Midday','PM')),
+    pen_id       INTEGER NOT NULL REFERENCES pen.pens(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by   TEXT    NULL,
+    PRIMARY KEY (session_type, pen_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bunk_route_session_pos
+    ON pen.bunk_route (session_type, position);
+
+-- pen_ration_history — audit log of ration assignments per pen
+CREATE TABLE IF NOT EXISTS pen.pen_ration_history (
+    id             SERIAL PRIMARY KEY,
+    pen_id         INTEGER NOT NULL REFERENCES pen.pens(id) ON DELETE CASCADE,
+    ration_id      INTEGER REFERENCES feed.rations(id) ON DELETE SET NULL,
+    effective_from DATE NOT NULL,
+    effective_to   DATE,
+    changed_by     TEXT,
+    changed_at     TIMESTAMPTZ DEFAULT NOW(),
+    source         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pen_ration_history_pen
+    ON pen.pen_ration_history (pen_id, effective_from);
 
 -- penshistory (V2: 17 clients — pen movement history)
 CREATE TABLE IF NOT EXISTS pen.penshistory (
@@ -3030,7 +3103,13 @@ CREATE TABLE IF NOT EXISTS operations.bunk_call_entries (
   ration_name     TEXT,
   head_count      INTEGER,
   notes           TEXT,
-  created_at      TIMESTAMPTZ DEFAULT NOW()
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  remaining_kg    NUMERIC(10,2) NULL,
+  shoveled        BOOLEAN NOT NULL DEFAULT FALSE,
+  bunk_code       TEXT NULL CHECK (bunk_code IS NULL OR bunk_code IN ('U','S','D')),
+  variation_pct   NUMERIC(5,2) NULL,
+  alloc_kg        NUMERIC(10,2) NULL,
+  other_notes     TEXT NULL
 );
 
 -- rfid_scan_sessions (OG web-app)
@@ -3562,7 +3641,7 @@ BEGIN
     -- NOTE: dress_pcnt and live_weight_shrink_pcnt CHECKs removed — legacy data has values outside 0-100
     -- Application layer should enforce BETWEEN 0 AND 100 for new records
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ration_dry_matter') THEN
-        ALTER TABLE feed.ration_descriptions ADD CONSTRAINT chk_ration_dry_matter CHECK (dry_matter_pcnt BETWEEN 0 AND 100);
+        ALTER TABLE feed.rations ADD CONSTRAINT chk_ration_dry_matter CHECK (dry_matter_pcnt BETWEEN 0 AND 100);
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_recipe_pcnt') THEN
         ALTER TABLE feed.ration_recipe_records ADD CONSTRAINT chk_recipe_pcnt CHECK (pcnt_of_ration BETWEEN 0 AND 100);
@@ -4261,26 +4340,7 @@ ALTER TABLE feed.ration_calc_constants ADD COLUMN IF NOT EXISTS minnem_constant 
 ALTER TABLE feed.ration_calc_constants ADD COLUMN IF NOT EXISTS minnem_power_raised REAL NULL;
 ALTER TABLE feed.ration_calc_constants ADD COLUMN IF NOT EXISTS rationcode SMALLINT;
 ALTER TABLE feed.ration_calc_constants ADD COLUMN IF NOT EXISTS rationname VARCHAR(15);
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS current_value_kg NUMERIC(12,4) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS custom_feed_charge_ton NUMERIC(12,4) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS custom_feed_markup_doll_per_ton NUMERIC(12,4) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS custom_pcnt_markup REAL NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS date_last_modified DATE NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS date_ration_created DATE NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS delivered_to_bunk_cost_per_ton NUMERIC(12,4) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS interest_cost_per_ton NUMERIC(12,4) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS liquids_premix_ration BOOLEAN NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS micro_nutrient_cost_per_ton NUMERIC(12,4) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS minimum_ration_value_ton NUMERIC(12,4) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS mixing_time VARCHAR(6) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS nem_kg REAL NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS pcnt_feedweight_tolerance REAL NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS ration_colour VARCHAR(15) NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS ration_density REAL NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS stationary_mixer BOOLEAN NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS superceeded BOOLEAN DEFAULT FALSE;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS withhold_days INTEGER NULL;
-ALTER TABLE feed.ration_descriptions ADD COLUMN IF NOT EXISTS zonename VARCHAR(3) NULL;
+-- feed.rations columns are all defined inline in CREATE TABLE above (unified ration master)
 ALTER TABLE feed.ration_recipe_records ADD COLUMN IF NOT EXISTS liquid_ration_component BOOLEAN NULL;
 ALTER TABLE feed.ration_recipe_records ADD COLUMN IF NOT EXISTS loading_seq SMALLINT NULL;
 ALTER TABLE feed.ration_recipe_records ADD COLUMN IF NOT EXISTS rec_id INTEGER;
@@ -4297,10 +4357,7 @@ ALTER TABLE feed.ration_regimes ADD COLUMN IF NOT EXISTS pm_ration_code SMALLINT
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS group_name VARCHAR(15) NULL;
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS notes VARCHAR(50) NULL;
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS ration_type VARCHAR(15);
-ALTER TABLE feed.rations ADD COLUMN IF NOT EXISTS custom_feed_charge_ton NUMERIC(12,4) NULL;
-ALTER TABLE feed.rations ADD COLUMN IF NOT EXISTS notes VARCHAR(50) NULL;
-ALTER TABLE feed.rations ADD COLUMN IF NOT EXISTS ration_name VARCHAR(10);
-ALTER TABLE feed.rations ADD COLUMN IF NOT EXISTS valueperton NUMERIC(12,4) NULL;
+-- feed.rations OG-style columns (notes, valueperton, custom_feed_charge_ton) are inline in CREATE TABLE
 ALTER TABLE feed.titration_ration_regimes ADD COLUMN IF NOT EXISTS adg_expected REAL NULL;
 ALTER TABLE feed.titration_ration_regimes ADD COLUMN IF NOT EXISTS date_defined DATE NULL;
 ALTER TABLE feed.titration_ration_regimes ADD COLUMN IF NOT EXISTS end_day_number SMALLINT;
@@ -4452,7 +4509,7 @@ ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS units VARCHAR(10) NULL;
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS units_per_boxorbottle INTEGER NULL;
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS withhold_days_1 SMALLINT NULL;
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS withhold_days_esi SMALLINT NULL;
-ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS beastid INTEGER;
+-- health.drugs_given.beast_id is defined inline in CREATE TABLE
 ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS last_modified_timestamp TIMESTAMPTZ NULL;
 ALTER TABLE health.drugs_purchased ADD COLUMN IF NOT EXISTS drugid SMALLINT NULL;
 ALTER TABLE health.mort_morb_triggers ADD COLUMN IF NOT EXISTS tablename VARCHAR(10);
@@ -4795,7 +4852,7 @@ ALTER TABLE carcase.carcase_grades ALTER COLUMN code DROP NOT NULL;
 ALTER TABLE carcase.carcase_grades_us ALTER COLUMN grade_code DROP NOT NULL;
 ALTER TABLE system.code_references_index ALTER COLUMN code DROP NOT NULL;
 ALTER TABLE commodity.commodities ALTER COLUMN commodity_name DROP NOT NULL;
-ALTER TABLE feed.rations ALTER COLUMN name DROP NOT NULL;
+-- feed.rations.name column no longer exists (consolidated to ration_name)
 ALTER TABLE weighing.weighing_types ALTER COLUMN name DROP NOT NULL;
 ALTER TABLE feed.bunk_code_desc ALTER COLUMN code DROP NOT NULL;
 ALTER TABLE feed.feed_month_end_date ALTER COLUMN end_date DROP NOT NULL;
@@ -4870,13 +4927,13 @@ DECLARE
         ARRAY['fk_inv_line_drug',         'ALTER TABLE health.drug_inventory_line_items ADD CONSTRAINT fk_inv_line_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(drug_id) ON DELETE RESTRICT'],
         -- feed → pen, commodity, cattle, contacts
         ARRAY['fk_bunk_pen',              'ALTER TABLE feed.bunk_readings ADD CONSTRAINT fk_bunk_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
-        ARRAY['fk_bunk_ration',           'ALTER TABLE feed.bunk_readings ADD CONSTRAINT fk_bunk_ration FOREIGN KEY (ration_code) REFERENCES feed.ration_descriptions(ration_code) ON DELETE SET NULL'],
+        ARRAY['fk_bunk_ration',           'ALTER TABLE feed.bunk_readings ADD CONSTRAINT fk_bunk_ration FOREIGN KEY (ration_code) REFERENCES feed.rations(ration_code) ON DELETE SET NULL'],
         ARRAY['fk_ration_regime_pen',     'ALTER TABLE feed.ration_regimes ADD CONSTRAINT fk_ration_regime_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_paddock_feed_commodity','ALTER TABLE feed.paddock_feeding ADD CONSTRAINT fk_paddock_feed_commodity FOREIGN KEY (commodity_id) REFERENCES commodity.commodities(commodity_code) ON DELETE RESTRICT'],
         ARRAY['fk_paddock_feed_cow',      'ALTER TABLE feed.paddock_feeding ADD CONSTRAINT fk_paddock_feed_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_cattle_feed_updates_cow','ALTER TABLE feed.cattle_feed_updates ADD CONSTRAINT fk_cattle_feed_updates_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_penfeedsdata_pen',      'ALTER TABLE feed.penfeedsdata ADD CONSTRAINT fk_penfeedsdata_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE RESTRICT'],
-        ARRAY['fk_penfeedsdata_ration',   'ALTER TABLE feed.penfeedsdata ADD CONSTRAINT fk_penfeedsdata_ration FOREIGN KEY (ration_code) REFERENCES feed.ration_descriptions(ration_code) ON DELETE SET NULL'],
+        ARRAY['fk_penfeedsdata_ration',   'ALTER TABLE feed.penfeedsdata ADD CONSTRAINT fk_penfeedsdata_ration FOREIGN KEY (ration_code) REFERENCES feed.rations(ration_code) ON DELETE SET NULL'],
         ARRAY['fk_vendor_decl_owner',     'ALTER TABLE feed.vendor_declarations ADD CONSTRAINT fk_vendor_decl_owner FOREIGN KEY (owner_contact_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         -- pen → cattle, feed
         ARRAY['fk_penshistory_cow',       'ALTER TABLE pen.penshistory ADD CONSTRAINT fk_penshistory_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
@@ -4921,7 +4978,7 @@ DECLARE
         ARRAY['fk_weighing_cow',          'ALTER TABLE weighing.weighing_events ADD CONSTRAINT fk_weighing_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_weighing_cattle',       'ALTER TABLE weighing.weighing_events ADD CONSTRAINT fk_weighing_cattle FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         -- transport → cattle, commodity, feed
-        ARRAY['fk_truckloads_ration',     'ALTER TABLE transport.truck_loads ADD CONSTRAINT fk_truckloads_ration FOREIGN KEY (ration_code) REFERENCES feed.ration_descriptions(ration_code) ON DELETE RESTRICT'],
+        ARRAY['fk_truckloads_ration',     'ALTER TABLE transport.truck_loads ADD CONSTRAINT fk_truckloads_ration FOREIGN KEY (ration_code) REFERENCES feed.rations(ration_code) ON DELETE RESTRICT'],
         ARRAY['fk_dockets_commodity',     'ALTER TABLE transport.deliverydockets ADD CONSTRAINT fk_dockets_commodity FOREIGN KEY (commodity_code) REFERENCES commodity.commodities(commodity_code) ON DELETE SET NULL'],
         ARRAY['fk_locchanges_cow',        'ALTER TABLE transport.location_changes ADD CONSTRAINT fk_locchanges_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_locchanges_beast',      'ALTER TABLE transport.location_changes ADD CONSTRAINT fk_locchanges_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
@@ -5210,7 +5267,7 @@ DECLARE
     'health.drug_transfers', 'health.drug_transfer_records',
     'health.drug_purchase_events', 'health.sick_beast_brd_symptoms',
     -- feed
-    'feed.ration_types', 'feed.ration_descriptions', 'feed.ration_recipe_records',
+    'feed.ration_types', 'feed.rations', 'feed.ration_recipe_records',
     'feed.ration_regimes', 'feed.ration_load_sizes', 'feed.ration_load_size_entries',
     'feed.ration_calc_constants', 'feed.dual_ration_feeding',
     'feed.titration_ration_regimes', 'feed.bunk_code_desc', 'feed.bunk_readings',
