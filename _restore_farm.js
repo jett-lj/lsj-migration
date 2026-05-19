@@ -105,12 +105,36 @@ function fileListOnly(bakPath) {
 
 function restoreBak(bakPath, targetDb, dataPath, logPath) {
   const files = fileListOnly(bakPath);
+  // Legacy CFR VB app derives Feed/FeedTrans paths via Replace(CattleMDF, ".MDF", "_FEED.MDF" / "_FEEDTRANS.MDF").
+  // So physical files MUST be named exactly:
+  //   CATTLE             → CATTLE.mdf            + CATTLE_log.ldf
+  //   CATTLE_feed        → CATTLE_Feed.mdf       + CATTLE_Feed_log.ldf
+  //   CATTLE_Feedtrans   → CATTLE_FeedTrans.mdf  + CATTLE_FeedTrans_log.ldf
+  // Map our internal targetDb names to the legacy-expected base filename (preserves casing).
+  const legacyBaseName = (() => {
+    if (/^CATTLE_Feedtrans$/i.test(targetDb)) return 'CATTLE_FeedTrans';
+    if (/^CATTLE_feed$/i.test(targetDb))      return 'CATTLE_Feed';
+    return 'CATTLE';
+  })();
+
+  // Separate data vs log files; if multiple data files exist, suffix with index.
+  const dataFiles = files.filter(f => (f.type || '').toUpperCase() !== 'L');
+  const logFiles  = files.filter(f => (f.type || '').toUpperCase() === 'L');
+
   const moves = files.map(f => {
-    const isLog  = (f.type || '').toUpperCase() === 'L';
-    const ext    = isLog ? '.ldf' : '.mdf';
-    const dir    = isLog ? logPath : dataPath;
-    const safe   = f.logical.replace(/[^A-Za-z0-9_]/g, '_');
-    const phys   = path.join(dir, `${targetDb}_${safe}${ext}`);
+    const isLog = (f.type || '').toUpperCase() === 'L';
+    const ext   = isLog ? '.ldf' : '.mdf';
+    const dir   = isLog ? logPath : dataPath;
+    let phys;
+    if (isLog) {
+      const idx = logFiles.indexOf(f);
+      const suffix = logFiles.length > 1 ? `_log${idx + 1}` : '_log';
+      phys = path.join(dir, `${legacyBaseName}${suffix}${ext}`);
+    } else {
+      const idx = dataFiles.indexOf(f);
+      const suffix = dataFiles.length > 1 ? `_${idx + 1}` : '';
+      phys = path.join(dir, `${legacyBaseName}${suffix}${ext}`);
+    }
     return `MOVE N'${f.logical.replace(/'/g, "''")}' TO N'${phys.replace(/'/g, "''")}'`;
   }).join(', ');
 
