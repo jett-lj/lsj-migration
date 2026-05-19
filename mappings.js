@@ -36,9 +36,24 @@ function toBytea(v) {
   return null;
 }
 
-/** Parse SQL Server datetime to ISO string or null */
+/** Parse SQL Server datetime (or legacy DD/MM/YYYY varchar) to ISO string or null */
 function toDate(v) {
   if (!v) return null;
+  // Legacy varchar dates stored as DD/MM/YYYY or DD/MM/YYYY HH:MM[:SS]
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (s.length === 0) return null;
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (m) {
+      const [, dd, mm, yyyy, hh = '0', mi = '0', ss = '0'] = m;
+      const d = new Date(Date.UTC(+yyyy, +mm - 1, +dd, +hh, +mi, +ss));
+      // Sanity-check round-trip (rejects e.g. 31/02/2020)
+      if (d.getUTCFullYear() === +yyyy && d.getUTCMonth() === +mm - 1 && d.getUTCDate() === +dd) {
+        return d.toISOString();
+      }
+      return null;
+    }
+  }
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
@@ -3897,7 +3912,7 @@ const mappings = [
       { source: 'Bunk_Volume',                  target: 'bunk_volume',                  transform: toNum },
       { source: 'IsPaddock',                    target: 'ispaddock',                    transform: toBool },
       { source: 'Expected_WG_Day',              target: 'expected_wg_day',              transform: toNum },
-      { source: 'Date_last_cleaned',            target: 'date_last_cleaned',            transform: trimOrNull },
+      { source: 'Date_last_cleaned',            target: 'date_last_cleaned',            transform: toDate },
       { source: 'Ration_Code_PM',               target: 'ration_code_pm',               transform: toNum },
       { source: 'Exclude_from_feed_generation', target: 'exclude_from_feed_generation', transform: toBool },
       { source: 'Titration_Regime',             target: 'titration_regime',             transform: trimOrNull },
