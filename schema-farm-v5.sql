@@ -1267,6 +1267,12 @@ CREATE TABLE IF NOT EXISTS feed.bunk_code_desc (
 );
 
 -- bunk_readings (V2: 17 clients — daily bunk score observations)
+-- origin: 'cfr' = row mirrored from CFR by cfr-sync OR bulk-loaded by this
+-- migration tool (both are CFR-sourced and may be refreshed by the live sync);
+-- NULL = entered in LSJ-HUB after go-live (never touched by the sync). Migrated
+-- rows are tagged 'cfr' via the Bunk_Readings mapping's staticColumns so the
+-- LSJ-HUB cfr-sync owns them rather than the initFarmDb backfill heuristic
+-- having to guess from which hub-only fields happen to be populated.
 CREATE TABLE IF NOT EXISTS feed.bunk_readings (
   id                 SERIAL PRIMARY KEY,
   pen_number_id      INTEGER,
@@ -1277,6 +1283,7 @@ CREATE TABLE IF NOT EXISTS feed.bunk_readings (
   time_checked       TEXT,
   trough_weight      NUMERIC(10,2),
   pen_name           TEXT,
+  origin             TEXT,
   created_at         TIMESTAMPTZ DEFAULT NOW(),
   updated_at         TIMESTAMPTZ
 );

@@ -3691,6 +3691,11 @@ const mappings = [
       { source: 'Shovel_bunk',            target: 'shovel_bunk',         transform: toBool },
       { source: 'Notes',                  target: 'notes',               transform: trimOrNull },
     ],
+    // These are CFR-sourced rows — tag them as mirror data so LSJ-HUB's
+    // cfr-sync owns/refreshes them. Without this they'd land with origin=NULL
+    // and the initFarmDb backfill would misclassify any row carrying
+    // bunk_reading/feed_alloc/notes as hub-entered (origin stays NULL).
+    staticColumns: { origin: 'cfr' },
   },
 
   {
