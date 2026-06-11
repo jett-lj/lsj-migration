@@ -1,7 +1,7 @@
 /**
- * Column-coverage test suite â€” 5 layers of verification.
+ * Column-coverage test suite ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 5 layers of verification.
  *
- * Layer 1: Static manifest audit (every column in column-audit.md â†” mappings.js)
+ * Layer 1: Static manifest audit (every column in column-audit.md ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Â mappings.js)
  * Layer 2: Golden-row integration (one row per table, all columns non-null)
  * Layer 3: Numeric precision & edge cases
  * Layer 4: FK chain end-to-end
@@ -15,7 +15,7 @@ const fs   = require('fs');
 const path = require('path');
 const pg   = require('pg');
 const { Pool } = pg;
-pg.types.setTypeParser(1700, parseFloat);   // NUMERIC → JS number
+pg.types.setTypeParser(1700, parseFloat);   // NUMERIC Ã¢â€ â€™ JS number
 
 const {
   toBool, trimOrNull, toDate, toNum, toFkId,
@@ -28,7 +28,7 @@ const {
   buildLookup, buildCowIdMap, createLogger,
 } = require('../runner');
 
-// â”€â”€ Test helpers 
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test helpers 
 
 const TEST_DB = 'lsj_column_coverage_test';
 const V3_SCHEMA = path.join(__dirname, '..', 'schema-farm-v5.sql');
@@ -55,49 +55,7 @@ function testPool() {
   });
 }
 
-function createMockMssql(tables) {
-  const sortedKeys = Object.keys(tables).sort((a, b) => b.length - a.length);
-
-  // Use regex with boundary check to avoid 'dbo.Cattle' matching 'dbo.Cattle_Program_Types'
-  // Handles both dbo.Table and [dbo].[Table] formats
-  function findTable(sql) {
-    for (const tableName of sortedKeys) {
-      const escaped = tableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`\\[?dbo\\]?\\.\\[?${escaped}\\]?(?![a-zA-Z0-9_])`);
-      if (re.test(sql)) {
-        return tableName;
-      }
-    }
-    return null;
-  }
-
-  return {
-    request() {
-      return {
-        async query(sql) {
-          if (/SELECT\s+COUNT\s*\(\s*\*\s*\)/i.test(sql)) {
-            const tbl = findTable(sql);
-            if (tbl) return { recordset: [{ cnt: tables[tbl].length }] };
-            return { recordset: [{ cnt: 0 }] };
-          }
-          const offsetMatch = sql.match(/OFFSET\s+(\d+)\s+ROWS\s+FETCH\s+NEXT\s+(\d+)\s+ROWS\s+ONLY/i);
-          const tbl = findTable(sql);
-          if (tbl) {
-            let rows = tables[tbl];
-            if (offsetMatch) {
-              const offset = parseInt(offsetMatch[1]);
-              const limit  = parseInt(offsetMatch[2]);
-              rows = rows.slice(offset, offset + limit);
-            }
-            return { recordset: rows };
-          }
-          return { recordset: [] };
-        },
-      };
-    },
-    async close() {},
-  };
-}
+const { createMockMssql } = require('./mock-mssql');
 
 let pgPool;
 
@@ -111,7 +69,7 @@ beforeAll(async () => {
   }
   pgPool = testPool();
   const schema = fs.readFileSync(V3_SCHEMA, 'utf8');
-  // Strip FK constraints — v5 wraps FKs in DO $$ blocks with _fks TEXT[][]
+  // Strip FK constraints Ã¢â‚¬â€ v5 wraps FKs in DO $$ blocks with _fks TEXT[][]
   const FK_DO_BLOCK = /DO \$\$\s*DECLARE\s+_fk\b[\s\S]*?\$\$;/g;
   const FK_INLINE    = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
   await pgPool.query(schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, ''));
@@ -127,7 +85,7 @@ afterAll(async () => {
   }
 });
 
-// â”€â”€ Manifest: expected columns per source table â”€â”€â”€â”€â”€â”€
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Manifest: expected columns per source table ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
 const MANIFEST = {
   Breeds: ['Breed_Code', 'Breed_Name'],
@@ -472,7 +430,7 @@ const MANIFEST = {
     'Marbling_bonus_lot',
     'Last_Modified_timestamp',
   ],
-  // Carcase_DataType2: excluded — 0 rows, unused alternative carcase schema
+  // Carcase_DataType2: excluded Ã¢â‚¬â€ 0 rows, unused alternative carcase schema
   Carcase_import_Data: [
     'Col1',
     'Col2',
@@ -1501,11 +1459,11 @@ const MANIFEST = {
   User_Log_Ons: ['User_Number', 'Log_on_Date_time', 'Term_inal'],
 };
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // LAYER 1: STATIC MANIFEST AUDIT
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
-describe('Layer 1 â€” Static manifest audit', () => {
+describe('Layer 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Static manifest audit', () => {
   it('every source table in MANIFEST has a mapping', () => {
     const mappedSources = new Set(mappings.map(m => m.sourceTable));
     for (const src of Object.keys(MANIFEST)) {
@@ -1547,11 +1505,11 @@ describe('Layer 1 â€” Static manifest audit', () => {
   });
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // LAYER 2: GOLDEN ROW INTEGRATION
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
-describe('Layer 2 â€” Golden row per table', () => {
+describe('Layer 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Golden row per table', () => {
   beforeEach(async () => {
     const tables = [
       'finance.costs', 'pen.penshistory', 'health.drugs_given',
@@ -1608,13 +1566,13 @@ describe('Layer 2 â€” Golden row per table', () => {
                          Disposed_by: 'GD', Notes: 'golden disposal', Disposal_ID: 1 }],
   };
 
-  it('full migration with golden data â€” all tables populated correctly', async () => {
+  it('full migration with golden data ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â all tables populated correctly', async () => {
     const mock = createMockMssql(goldenData);
     const { results } = await runMigration(mock, pgPool, {
       batchSize: 100, logLevel: 'error', dryRun: false,
     });
 
-    // Only check tables present in goldenData — tables not in mock may fail
+    // Only check tables present in goldenData Ã¢â‚¬â€ tables not in mock may fail
     const goldenTables = new Set(Object.keys(goldenData));
     for (const r of results) {
       if (goldenTables.has(r.table)) {
@@ -1625,7 +1583,7 @@ describe('Layer 2 â€” Golden row per table', () => {
     // --- breeds ---
     const breeds = await pgPool.query("SELECT * FROM system.lookups WHERE category = 'breed' ORDER BY code");
     expect(breeds.rows).toHaveLength(1);
-    expect(breeds.rows[0].name).toBe('Golden Angus');
+    expect(breeds.rows[0].label).toBe('Golden Angus');
 
     // --- pens ---
     const pens = await pgPool.query("SELECT * FROM feed.feeddb_pens_file WHERE pen_name = 'GP01'");
@@ -1681,7 +1639,7 @@ describe('Layer 2 â€” Golden row per table', () => {
     const cow = cows.rows[0];
     expect(cow.ear_tag).toBe('G001');
     expect(cow.eid).toBe('EID_G001');
-    expect(cow.sex).toBe('steer');  // 'S' → steer
+    expect(cow.sex).toBe('steer');  // 'S' Ã¢â€ â€™ steer
     expect(cow.hgp).toBe(true);
     expect(cow.died).toBe(false);
     expect(cow.feedlot_entry_weight_kg).toBeCloseTo(350);
@@ -1708,7 +1666,7 @@ describe('Layer 2 â€” Golden row per table', () => {
     // --- health_records --- (queried before treatments for FK assertion)
     const hr = await pgPool.query('SELECT * FROM health.sick_beast_records');
     expect(hr.rows).toHaveLength(1);
-    // v3 stores sick_beast_records directly — no 'type' column
+    // v3 stores sick_beast_records directly Ã¢â‚¬â€ no 'type' column
     expect(hr.rows[0].sick_beast_notes).toBe('Golden illness');
     expect(hr.rows[0].disease_id).toBe(1);
     expect(hr.rows[0].date_recovered_died).not.toBeNull();
@@ -1723,7 +1681,7 @@ describe('Layer 2 â€” Golden row per table', () => {
     expect(tr.rows[0].units_given).toBeCloseTo(3.5);
     expect(tr.rows[0].user_initials).toBe('GD');
     expect(tr.rows[0].withold_until).not.toBeNull();
-    // treatment â†’ health_record link via SB_Rec_No
+    // treatment ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ health_record link via SB_Rec_No
     expect(tr.rows[0].sb_rec_no).toBe(hr.rows[0].sb_rec_no);
 
     // --- costs ---
@@ -1761,11 +1719,11 @@ describe('Layer 2 â€” Golden row per table', () => {
   }, 30000);
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // LAYER 3: NUMERIC PRECISION & EDGE CASES
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
-describe('Layer 3 â€” Numeric precision & edge cases', () => {
+describe('Layer 3 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Numeric precision & edge cases', () => {
   describe('withhold_days and esi_days nullable', () => {
     it('null withhold_days stays null (not coerced to 0)', () => {
       expect(toNum(null)).toBeNull();
@@ -1817,13 +1775,13 @@ describe('Layer 3 â€” Numeric precision & edge cases', () => {
   });
 
   describe('toBool inversion (active fields)', () => {
-    it('Inactive=true â†’ active=false', () => {
+    it('Inactive=true ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ active=false', () => {
       expect(!toBool(true)).toBe(false);
       expect(!toBool(1)).toBe(false);
       expect(!toBool('Y')).toBe(false);
     });
 
-    it('Inactive=false â†’ active=true', () => {
+    it('Inactive=false ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ active=true', () => {
       expect(!toBool(false)).toBe(true);
       expect(!toBool(0)).toBe(true);
       expect(!toBool(null)).toBe(true);
@@ -1831,7 +1789,7 @@ describe('Layer 3 â€” Numeric precision & edge cases', () => {
   });
 
   describe('toFkId sentinel handling', () => {
-    it('0 â†’ null (legacy default for no reference)', () => {
+    it('0 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ null (legacy default for no reference)', () => {
       expect(toFkId(0)).toBeNull();
       expect(toFkId('0')).toBeNull();
     });
@@ -1841,7 +1799,7 @@ describe('Layer 3 â€” Numeric precision & edge cases', () => {
       expect(toFkId(999)).toBe(999);
     });
 
-    it('null/undefined â†’ null', () => {
+    it('null/undefined ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ null', () => {
       expect(toFkId(null)).toBeNull();
       expect(toFkId(undefined)).toBeNull();
     });
@@ -1922,11 +1880,11 @@ describe('Layer 3 â€” Numeric precision & edge cases', () => {
   });
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // LAYER 4: FK CHAIN END-TO-END
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
-describe('Layer 4 â€” FK chain tests', () => {
+describe('Layer 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â FK chain tests', () => {
   beforeEach(async () => {
     const tables = [
       'finance.costs', 'pen.penshistory', 'health.drugs_given',
@@ -1942,7 +1900,7 @@ describe('Layer 4 â€” FK chain tests', () => {
     }
   });
 
-  it('beastIdMap skip â€” unknown BeastID skips the row', async () => {
+  it('beastIdMap skip ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown BeastID skips the row', async () => {
     const mock = createMockMssql({
       'Weighing_Events': [
         { BeastID: 9999, Weighing_Type: 1, Weigh_date: '2024-01-01', Weight: 300, P8_Fat: 5, Weigh_Note: 'orphan', ID: 1 },
@@ -1957,9 +1915,9 @@ describe('Layer 4 â€” FK chain tests', () => {
     expect(result.rowsWritten).toBe(0);
   });
 
-  it('drugIdSet sanitize â€” unknown drug_id set to null', async () => {
+  it('drugIdSet sanitize ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown drug_id set to null', async () => {
     // Seed a cow for the treatment to attach to
-    await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 1, 'Test') ON CONFLICT DO NOTHING");
+    await pgPool.query("INSERT INTO system.lookups (category, code, label) VALUES ('breed', 1, 'Test') ON CONFLICT DO NOTHING");
     await pgPool.query(`
       INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex)
       VALUES ('FK_DRUG', 7001, false, 'heifer')
@@ -1984,7 +1942,7 @@ describe('Layer 4 â€” FK chain tests', () => {
     expect(rows.rows[0].drug_id).toBeNull();
   });
 
-  it('contactIdSet sanitize â€” unknown vendor_id set to null', async () => {
+  it('contactIdSet sanitize ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown vendor_id set to null', async () => {
     const mock = createMockMssql({
       'Purchase_Lots': [
         { ID: 1, Lot_Number: 'FK_VEN', Purchase_date: '2024-01-01', Vendor_ID: 8888,
@@ -2003,8 +1961,8 @@ describe('Layer 4 â€” FK chain tests', () => {
     expect(rows.rows[0].vendor_id).toBeNull();
   });
 
-  it('costCodeMap resolve â€” cost_code_id correctly resolved', async () => {
-    await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 2, 'CostTest') ON CONFLICT DO NOTHING");
+  it('costCodeMap resolve ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cost_code_id correctly resolved', async () => {
+    await pgPool.query("INSERT INTO system.lookups (category, code, label) VALUES ('breed', 2, 'CostTest') ON CONFLICT DO NOTHING");
     await pgPool.query("INSERT INTO finance.cost_codes (revexp_code, revexp_desc, rev_exp) VALUES (99, 'TestCode', 'E') ON CONFLICT DO NOTHING");
     await pgPool.query(`
       INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex)
@@ -2033,8 +1991,8 @@ describe('Layer 4 â€” FK chain tests', () => {
     expect(rows.rows[0].rev_exp_per_unit).toBeCloseTo(5);
   });
 
-  it('pen auto-create â€” unknown pen is created on demand', async () => {
-    await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 3, 'PenTest') ON CONFLICT DO NOTHING");
+  it('pen auto-create ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown pen is created on demand', async () => {
+    await pgPool.query("INSERT INTO system.lookups (category, code, label) VALUES ('breed', 3, 'PenTest') ON CONFLICT DO NOTHING");
     await pgPool.query(`
       INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex)
       VALUES ('FK_PEN', 7003, false, 'heifer')
@@ -2065,13 +2023,13 @@ describe('Layer 4 â€” FK chain tests', () => {
     expect(pmRows.rows[0].pen).toBe('AutoPen01');
   });
 
-  it('disease_id FK â€” unknown disease_id (0) set to null via toFkId', () => {
+  it('disease_id FK ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown disease_id (0) set to null via toFkId', () => {
     expect(toFkId(0)).toBeNull();
     expect(toFkId(null)).toBeNull();
   });
 
-  it('diseaseIdSet sanitize â€” unknown disease_id set to null', async () => {
-    await pgPool.query("INSERT INTO system.lookups (category, code, name) VALUES ('breed', 4, 'DiseaseTest') ON CONFLICT DO NOTHING");
+  it('diseaseIdSet sanitize ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown disease_id set to null', async () => {
+    await pgPool.query("INSERT INTO system.lookups (category, code, label) VALUES ('breed', 4, 'DiseaseTest') ON CONFLICT DO NOTHING");
     await pgPool.query(`
       INSERT INTO cattle.cows (ear_tag, legacy_beast_id, died, sex)
       VALUES ('FK_DIS', 7004, false, 'heifer')
@@ -2097,7 +2055,7 @@ describe('Layer 4 â€” FK chain tests', () => {
     expect(rows.rows[0].disease_id).toBeNull();
   });
 
-  it('drug_purchases â€” unknown drug_id nullified', async () => {
+  it('drug_purchases ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown drug_id nullified', async () => {
     await pgPool.query("INSERT INTO health.drug_purchase_events (drug_receival_id, date_received) VALUES (1, '2024-01-01') ON CONFLICT DO NOTHING");
     const mock = createMockMssql({
       'Drugs_Purchased': [
@@ -2116,11 +2074,11 @@ describe('Layer 4 â€” FK chain tests', () => {
   });
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // LAYER 5: SELF-CHECKS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
-describe('Layer 5 â€” Self-checks', () => {
+describe('Layer 5 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Self-checks', () => {
   beforeEach(async () => {
     const tables = [
       'finance.costs', 'pen.penshistory', 'health.drugs_given',
@@ -2239,7 +2197,7 @@ describe('Layer 5 â€” Self-checks', () => {
     }
   }, 30000);
 
-  it('FK orphan scan â€” no orphaned references after migration', async () => {
+  it('FK orphan scan ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no orphaned references after migration', async () => {
     const goldenData = {
       Breeds:           [{ Breed_Code: 1, Breed_Name: 'Angus' }],
       FeedDB_Pens_File: [{ Pen_name: 'P01', IsPaddock: 'N' }],
@@ -2304,7 +2262,7 @@ describe('Layer 5 â€” Self-checks', () => {
     }
   }, 30000);
 
-  it('idempotency â€” running migration twice yields same row counts', async () => {
+  it('idempotency ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â running migration twice yields same row counts', async () => {
     const goldenData = {
       Breeds:           [{ Breed_Code: 1, Breed_Name: 'Angus' }],
       FeedDB_Pens_File: [{ Pen_name: 'P01', IsPaddock: 'N' }],
@@ -2333,7 +2291,7 @@ describe('Layer 5 â€” Self-checks', () => {
     const breedsAfter1 = await pgPool.query('SELECT COUNT(*) AS cnt FROM system.lookups');
     const pensAfter1   = await pgPool.query('SELECT COUNT(*) AS cnt FROM feed.feeddb_pens_file');
 
-    // Run again â€” TRUNCATE CASCADE should reset, yielding same counts
+    // Run again ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â TRUNCATE CASCADE should reset, yielding same counts
     await runMigration(mock, pgPool, { batchSize: 100, logLevel: 'error' });
 
     const breedsAfter2 = await pgPool.query('SELECT COUNT(*) AS cnt FROM system.lookups');

@@ -1,8 +1,8 @@
 /**
- * Per-column test suite — auto-generated from mappings.js
+ * Per-column test suite Ã¢â‚¬â€ auto-generated from mappings.js
  *
  * For every mapping (195 source tables), verifies:
- *   1. Each column's transform handles null/undefined → expected fallback
+ *   1. Each column's transform handles null/undefined Ã¢â€ â€™ expected fallback
  *   2. Each column's transform handles representative values correctly
  *   3. Target column exists in the PostgreSQL schema
  *   4. Column count matches between mapping and MANIFEST
@@ -29,7 +29,7 @@ const {
   buildLookup, buildCowIdMap, createLogger,
 } = require('../runner');
 
-// ── Test DB ──────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Test DB Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 const TEST_DB = 'lsj_per_column_test';
 const V5_SCHEMA = path.join(__dirname, '..', 'schema-farm-v5.sql');
@@ -56,45 +56,9 @@ function testPool() {
   });
 }
 
-function createMockMssql(tables) {
-  const sortedKeys = Object.keys(tables).sort((a, b) => b.length - a.length);
-  function findTable(sql) {
-    for (const tableName of sortedKeys) {
-      const escaped = tableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`\\[?dbo\\]?\\.\\[?${escaped}\\]?(?![a-zA-Z0-9_])`);
-      if (re.test(sql)) return tableName;
-    }
-    return null;
-  }
-  return {
-    request() {
-      return {
-        async query(sql) {
-          if (/SELECT\s+COUNT\s*\(\s*\*\s*\)/i.test(sql)) {
-            const tbl = findTable(sql);
-            if (tbl) return { recordset: [{ cnt: tables[tbl].length }] };
-            return { recordset: [{ cnt: 0 }] };
-          }
-          const offsetMatch = sql.match(/OFFSET\s+(\d+)\s+ROWS\s+FETCH\s+NEXT\s+(\d+)\s+ROWS\s+ONLY/i);
-          const tbl = findTable(sql);
-          if (tbl) {
-            let rows = tables[tbl];
-            if (offsetMatch) {
-              const offset = parseInt(offsetMatch[1]);
-              const limit  = parseInt(offsetMatch[2]);
-              rows = rows.slice(offset, offset + limit);
-            }
-            return { recordset: rows };
-          }
-          return { recordset: [] };
-        },
-      };
-    },
-    async close() {},
-  };
-}
+const { createMockMssql } = require('./mock-mssql');
 
-// ── Schema setup / teardown ──────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Schema setup / teardown Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 let pgPool;
 
@@ -125,13 +89,13 @@ afterAll(async () => {
 });
 
 
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // SECTION 1: TRANSFORM FUNCTION COVERAGE
 // Every transform used in any mapping is tested with
 // null, undefined, typical, and edge-case inputs.
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
-describe('Transform functions — exhaustive', () => {
+describe('Transform functions Ã¢â‚¬â€ exhaustive', () => {
   describe('toBool', () => {
     it.each([
       [null, false], [undefined, false],
@@ -141,7 +105,7 @@ describe('Transform functions — exhaustive', () => {
       ['Y', true], ['N', false],
       ['y', true], ['TRUE', true], ['false', false],
       ['', false], ['X', false],
-    ])('toBool(%j) → %j', (input, expected) => {
+    ])('toBool(%j) Ã¢â€ â€™ %j', (input, expected) => {
       expect(toBool(input)).toBe(expected);
     });
   });
@@ -153,21 +117,21 @@ describe('Transform functions — exhaustive', () => {
       ['hello', 'hello'], ['  padded  ', 'padded'],
       ['has\0nulls', 'hasnulls'],
       [123, '123'],
-    ])('trimOrNull(%j) → %j', (input, expected) => {
+    ])('trimOrNull(%j) Ã¢â€ â€™ %j', (input, expected) => {
       expect(trimOrNull(input)).toBe(expected);
     });
   });
 
   describe('toDate', () => {
-    it('null → null', () => expect(toDate(null)).toBeNull());
-    it('undefined → null', () => expect(toDate(undefined)).toBeNull());
-    it('empty string → null', () => expect(toDate('')).toBeNull());
-    it('invalid string → null', () => expect(toDate('not-a-date')).toBeNull());
-    it('valid ISO → ISO string', () => {
+    it('null Ã¢â€ â€™ null', () => expect(toDate(null)).toBeNull());
+    it('undefined Ã¢â€ â€™ null', () => expect(toDate(undefined)).toBeNull());
+    it('empty string Ã¢â€ â€™ null', () => expect(toDate('')).toBeNull());
+    it('invalid string Ã¢â€ â€™ null', () => expect(toDate('not-a-date')).toBeNull());
+    it('valid ISO Ã¢â€ â€™ ISO string', () => {
       const result = toDate('2024-01-15');
       expect(result).toMatch(/^2024-01-15/);
     });
-    it('JS Date object → ISO string', () => {
+    it('JS Date object Ã¢â€ â€™ ISO string', () => {
       const result = toDate(new Date('2024-06-01T12:00:00Z'));
       expect(result).toMatch(/^2024-06-01/);
     });
@@ -182,7 +146,7 @@ describe('Transform functions — exhaustive', () => {
       ['', 0], // Number('') === 0
       ['abc', null], [NaN, null],
       [999999999, 999999999],
-    ])('toNum(%j) → %j', (input, expected) => {
+    ])('toNum(%j) Ã¢â€ â€™ %j', (input, expected) => {
       expect(toNum(input)).toBe(expected);
     });
   });
@@ -193,7 +157,7 @@ describe('Transform functions — exhaustive', () => {
       [0, null],    // 0 is sentinel for "no reference"
       [1, 1], [999, 999],
       ['5', 5], ['0', null],
-    ])('toFkId(%j) → %j', (input, expected) => {
+    ])('toFkId(%j) Ã¢â€ â€™ %j', (input, expected) => {
       expect(toFkId(input)).toBe(expected);
     });
   });
@@ -206,7 +170,7 @@ describe('Transform functions — exhaustive', () => {
       ['F', 'heifer'], ['H', 'heifer'], ['C', 'cow'],
       ['f', 'heifer'], ['h', 'heifer'],
       ['X', 'heifer'], // unknown defaults to heifer
-    ])('mapSex(%j) → %j', (input, expected) => {
+    ])('mapSex(%j) Ã¢â€ â€™ %j', (input, expected) => {
       expect(mapSex(input)).toBe(expected);
     });
   });
@@ -220,7 +184,7 @@ describe('Transform functions — exhaustive', () => {
       [{}, 'active'],
       [{ Died: '1' }, 'died'],  // toBool('1') = true
       [{ Sale_Date: '1900-01-01' }, 'active'], // 1900 sentinel not > 1901
-    ])('deriveCowStatus(%j) → %s', (row, expected) => {
+    ])('deriveCowStatus(%j) Ã¢â€ â€™ %s', (row, expected) => {
       expect(deriveCowStatus(row)).toBe(expected);
     });
   });
@@ -230,7 +194,7 @@ describe('Transform functions — exhaustive', () => {
       [1, 'intake'], [2, 'interim'], [3, 'exit'], [4, 'sale'],
       [0, 'interim'], [99, 'interim'], [null, 'interim'],
       ['1', 'intake'], ['3', 'exit'],
-    ])('mapWeighType(%j) → %s', (input, expected) => {
+    ])('mapWeighType(%j) Ã¢â€ â€™ %s', (input, expected) => {
       expect(mapWeighType(input)).toBe(expected);
     });
   });
@@ -240,7 +204,7 @@ describe('Transform functions — exhaustive', () => {
       [null, 'expense'], [undefined, 'expense'], ['', 'expense'],
       ['R', 'revenue'], ['r', 'revenue'],
       ['E', 'expense'], ['X', 'expense'],
-    ])('mapCostType(%j) → %s', (input, expected) => {
+    ])('mapCostType(%j) Ã¢â€ â€™ %s', (input, expected) => {
       expect(mapCostType(input)).toBe(expected);
     });
   });
@@ -254,18 +218,18 @@ describe('Transform functions — exhaustive', () => {
       ['abattoir', 'abattoir'], ['meatworks', 'abattoir'],
       ['carrier', 'carrier'], ['transport co', 'carrier'],
       ['unknown', 'other'],
-    ])('mapContactType(%j) → %s', (input, expected) => {
+    ])('mapContactType(%j) Ã¢â€ â€™ %s', (input, expected) => {
       expect(mapContactType(input)).toBe(expected);
     });
   });
 });
 
 
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // SECTION 2: MAPPING STRUCTURAL INTEGRITY
 // Verify every mapping has valid structure, non-empty
 // columns, and no duplicate target columns.
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 describe('Mapping structural integrity', () => {
   it('all 195 mappings are loaded', () => {
@@ -273,7 +237,7 @@ describe('Mapping structural integrity', () => {
   });
 
   mappings.forEach((m, idx) => {
-    describe(`[${idx}] ${m.sourceTable} → ${m.targetTable}`, () => {
+    describe(`[${idx}] ${m.sourceTable} Ã¢â€ â€™ ${m.targetTable}`, () => {
       it('has required fields', () => {
         expect(m.sourceTable).toBeTruthy();
         expect(m.targetTable).toBeTruthy();
@@ -293,9 +257,9 @@ describe('Mapping structural integrity', () => {
       it('no duplicate target columns', () => {
         const targets = m.columns.map(c => c.target);
         const dupes = targets.filter((t, i) => targets.indexOf(t) !== i);
-        // Some mappings legitimately map the same source to two targets (e.g. Drug_Name → name + drug_name)
+        // Some mappings legitimately map the same source to two targets (e.g. Drug_Name Ã¢â€ â€™ name + drug_name)
         // So we only flag truly identical source+target pairs
-        const pairs = m.columns.map(c => `${c.source}→${c.target}`);
+        const pairs = m.columns.map(c => `${c.source}Ã¢â€ â€™${c.target}`);
         const dupePairs = pairs.filter((p, i) => pairs.indexOf(p) !== i);
         expect(dupePairs).toEqual([]);
       });
@@ -312,11 +276,11 @@ describe('Mapping structural integrity', () => {
 });
 
 
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // SECTION 3: PER-COLUMN NULL/UNDEFINED HANDLING
 // For every column with a transform, verify it handles
 // null and undefined inputs without throwing.
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 describe('Per-column null safety', () => {
   const seen = new Set();
@@ -324,7 +288,7 @@ describe('Per-column null safety', () => {
   mappings.forEach(m => {
     m.columns.forEach(col => {
       if (!col.transform) return;
-      const key = `${m.sourceTable}.${col.source}→${col.target} [${col.transform.name}]`;
+      const key = `${m.sourceTable}.${col.source}Ã¢â€ â€™${col.target} [${col.transform.name}]`;
       if (seen.has(key)) return;
       seen.add(key);
 
@@ -340,11 +304,11 @@ describe('Per-column null safety', () => {
 });
 
 
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // SECTION 4: TARGET COLUMN EXISTS IN SCHEMA
 // For every mapping, verify each target column actually
 // exists in the PostgreSQL target table.
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 describe('Target columns exist in PostgreSQL schema', () => {
   // Build a cache of schema columns
@@ -393,17 +357,17 @@ describe('Target columns exist in PostgreSQL schema', () => {
 });
 
 
-// ════════════════════════════════════════════════════════
-// SECTION 5: PER-TABLE INTEGRATION — SINGLE MIGRATION
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+// SECTION 5: PER-TABLE INTEGRATION Ã¢â‚¬â€ SINGLE MIGRATION
 // One comprehensive migration run with all prerequisite
 // data, then per-table assertions on every column.
-// ════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 describe('Per-table column integration', () => {
   // Run a single migration with all tables' test data
   beforeAll(async () => {
     const allData = {
-      // ── Lookup / prereq tables ──
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Lookup / prereq tables Ã¢â€â‚¬Ã¢â€â‚¬
       Breeds: [{ Breed_Code: 1, Breed_Name: 'Angus' }],
       FeedDB_Pens_File: [{ Pen_name: '  FP01  ', IsPaddock: 'Y', Include_in_Pen_List: 1, Current_exit_pen: true }],
       Contacts: [{
@@ -451,7 +415,7 @@ describe('Per-table column integration', () => {
       Beast_Cull_Reasons: [{ Cull_Reason_ID: 1, Cull_Reason: 'Non performer' }],
       Cattle_Program_Types: [{ Program_ID: 1, Program_Code: 'STD', DOF: 120, Program_Description: 'Standard' }],
 
-      // ── Main tables ──
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Main tables Ã¢â€â‚¬Ã¢â€â‚¬
       Cattle: [{
         BeastID: 500, Ear_Tag: 'CT001', EID: '982000123456789', Breed: 1,
         Sex: 'B', HGP: true, Feedlot_Entry_Date: '2024-01-15',
@@ -506,7 +470,7 @@ describe('Per-table column integration', () => {
         Marbling_bonus_lot: false, Last_Modified_timestamp: '2024-01-20T08:00:00Z',
       }],
 
-      // ── BeastID-dependent tables ──
+      // Ã¢â€â‚¬Ã¢â€â‚¬ BeastID-dependent tables Ã¢â€â‚¬Ã¢â€â‚¬
       Weighing_Events: [{
         BeastID: 500, Weighing_Type: 3, Weigh_date: '2024-04-15', Weight: 580.5,
         P8_Fat: 12, Weigh_Note: 'Exit weigh', Ear_Tag: 'CT001', Days_Owned: 105,
@@ -548,7 +512,7 @@ describe('Per-table column integration', () => {
         Autopsied: false, Last_Modified_timestamp: '2024-02-25T10:00:00Z',
       }],
 
-      // ── Standalone tables ──
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Standalone tables Ã¢â€â‚¬Ã¢â€â‚¬
       Treatment_Regimes: [{
         DiseaseID: 50, Day_Numb: 0, Drug_Name: 'Excenel',
         Dose: 5.0, DoseByWeight: true, Drug_ID: 77, UserID: 1,
@@ -593,8 +557,8 @@ describe('Per-table column integration', () => {
     await runMigration(mock, pgPool, { batchSize: 100, logLevel: 'error', dryRun: false });
   }, 120000);
 
-  // ── Contacts: 28 columns ──────────────────────────
-  it('Contacts — all 28 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Contacts: 28 columns Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Contacts Ã¢â‚¬â€ all 28 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM contacts.contacts WHERE contact_id = 99');
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -628,8 +592,8 @@ describe('Per-table column integration', () => {
     expect(r.last_modified_timestamp).not.toBeNull();
   });
 
-  // ── Diseases: 9 columns ───────────────────────────
-  it('Diseases — all 9 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Diseases: 9 columns Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Diseases Ã¢â‚¬â€ all 9 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM health.diseases WHERE disease_id = 50');
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -644,8 +608,8 @@ describe('Per-table column integration', () => {
     expect(r.autopsy_disease).toBe(false);
   });
 
-  // ── Drugs: 24 columns ─────────────────────────────
-  it('Drugs — all 24 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Drugs: 24 columns Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Drugs Ã¢â‚¬â€ all 24 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM health.drugs WHERE drug_id = 77');
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -674,8 +638,8 @@ describe('Per-table column integration', () => {
     expect(r.last_modified_timestamp).not.toBeNull();
   });
 
-  // ── Cost_Codes: 6 columns ─────────────────────────
-  it('Cost_Codes — all 6 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Cost_Codes: 6 columns Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Cost_Codes Ã¢â‚¬â€ all 6 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM finance.cost_codes WHERE revexp_code = 10');
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -687,8 +651,8 @@ describe('Per-table column integration', () => {
     expect(r.include_on_cf_invoice).toBe(false);
   });
 
-  // ── Market_Category: 6 columns ────────────────────
-  it('Market_Category — all 6 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Market_Category: 6 columns Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Market_Category Ã¢â‚¬â€ all 6 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM cattle.market_categories WHERE market_cat_id = 25');
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -699,8 +663,8 @@ describe('Per-table column integration', () => {
     expect(r.dispatch_notes).toBe('Premium program');
   });
 
-  // ── FeedDB_Pens_File: 4 columns ───────────────────
-  it('FeedDB_Pens_File — all 4 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ FeedDB_Pens_File: 4 columns Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('FeedDB_Pens_File Ã¢â‚¬â€ all 4 columns round-trip', async () => {
     const { rows } = await pgPool.query("SELECT * FROM feed.feeddb_pens_file WHERE pen_name = 'FP01'");
     expect(rows).toHaveLength(1);
     expect(rows[0].pen_name).toBe('FP01');
@@ -709,14 +673,14 @@ describe('Per-table column integration', () => {
     expect(rows[0].current_exit_pen).toBe(true);
   });
 
-  // ── Cattle: 78 columns (the big one) ──────────────
-  it('Cattle — all key columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Cattle: 78 columns (the big one) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Cattle Ã¢â‚¬â€ all key columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM cattle.cows WHERE legacy_beast_id = 500');
     expect(rows).toHaveLength(1);
     const c = rows[0];
     expect(c.ear_tag).toBe('CT001');
     expect(c.eid).toBe('982000123456789');
-    expect(c.sex).toBe('bull');              // 'B' → bull
+    expect(c.sex).toBe('bull');              // 'B' Ã¢â€ â€™ bull
     expect(c.hgp).toBe(true);
     expect(c.feedlot_entry_weight_kg).toBeCloseTo(380.5);
     expect(c.sale_weight_kg).toBeCloseTo(620.0);
@@ -779,8 +743,8 @@ describe('Per-table column integration', () => {
     expect(c.in_feedlot).toBe(true);
   });
 
-  // ── Weighing_Events ───────────────────────────────
-  it('Weighing_Events — all key columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Weighing_Events Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Weighing_Events Ã¢â‚¬â€ all key columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM weighing.weighing_events');
     expect(rows.length).toBeGreaterThanOrEqual(1);
     const r = rows[0];
@@ -793,8 +757,8 @@ describe('Per-table column integration', () => {
     expect(r.last_modified_timestamp).not.toBeNull();
   });
 
-  // ── PensHistory ───────────────────────────────────
-  it('PensHistory — all 4 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ PensHistory Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('PensHistory Ã¢â‚¬â€ all 4 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM pen.penshistory ORDER BY movedate');
     expect(rows.length).toBeGreaterThanOrEqual(2);
     expect(rows[0].pen).toBe('P01');
@@ -802,8 +766,8 @@ describe('Per-table column integration', () => {
     expect(rows[0].movedate).not.toBeNull();
   });
 
-  // ── Drugs_Given ───────────────────────────────────
-  it('Drugs_Given — all key columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Drugs_Given Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Drugs_Given Ã¢â‚¬â€ all key columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM health.drugs_given');
     expect(rows.length).toBeGreaterThanOrEqual(1);
     const r = rows[0];
@@ -818,8 +782,8 @@ describe('Per-table column integration', () => {
     expect(r.last_modified_timestamp).not.toBeNull();
   });
 
-  // ── Costs ─────────────────────────────────────────
-  it('Costs — all key columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Costs Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Costs Ã¢â‚¬â€ all key columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM finance.costs');
     expect(rows.length).toBeGreaterThanOrEqual(1);
     const r = rows[0];
@@ -832,8 +796,8 @@ describe('Per-table column integration', () => {
     expect(r.last_modified_timestamp).not.toBeNull();
   });
 
-  // ── Sick_Beast_Records ────────────────────────────
-  it('Sick_Beast_Records — all key columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Sick_Beast_Records Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Sick_Beast_Records Ã¢â‚¬â€ all key columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM health.sick_beast_records WHERE sb_rec_no = 100');
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -854,8 +818,8 @@ describe('Per-table column integration', () => {
     expect(r.last_modified_timestamp).not.toBeNull();
   });
 
-  // ── Purchase_Lots ─────────────────────────────────
-  it('Purchase_Lots — all key columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Purchase_Lots Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Purchase_Lots Ã¢â‚¬â€ all key columns round-trip', async () => {
     const { rows } = await pgPool.query("SELECT * FROM purchasing.purchase_lots WHERE lot_number = 'PL500'");
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -871,9 +835,9 @@ describe('Per-table column integration', () => {
     expect(r.cattle_invoice_no).toBe('INV001');
     expect(r.invoice_amount).toBeCloseTo(105250);
     expect(r.buying_fee).toBeCloseTo(500);
-    expect(r.buyer).toBe('99');               // toFkId(99) → 99, stored as VARCHAR
-    expect(r.purchase_region).toBeNull();       // toNum('Central QLD') → null
-    expect(r.risk_factor).toBeNull();            // toNum('Low') → null
+    expect(r.buyer).toBe('99');               // toFkId(99) Ã¢â€ â€™ 99, stored as VARCHAR
+    expect(r.purchase_region).toBeNull();       // toNum('Central QLD') Ã¢â€ â€™ null
+    expect(r.risk_factor).toBeNull();            // toNum('Low') Ã¢â€ â€™ null
     expect(r.custom_feed_lot).toBe(false);
     expect(r.feed_charge_per_ton).toBeCloseTo(250.00);
     expect(r.weigh_bridge_weight).toBeCloseTo(50500);
@@ -884,22 +848,22 @@ describe('Per-table column integration', () => {
     expect(r.last_modified_timestamp).not.toBeNull();
   });
 
-  // ── KD1_Records ───────────────────────────────────
-  it('KD1_Records — all 16 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ KD1_Records Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('KD1_Records Ã¢â‚¬â€ all 16 columns round-trip', async () => {
     const { rows } = await pgPool.query("SELECT * FROM cattle.kd1_records WHERE ear_tag = 'KD001'");
     expect(rows).toHaveLength(1);
     const r = rows[0];
     expect(r.weight).toBeCloseTo(455.5);
     expect(r.eid).toBe('982000111222333');
-    expect(r.teeth).toBe('6');               // trimOrNull → text
+    expect(r.teeth).toBe('6');               // trimOrNull Ã¢â€ â€™ text
     expect(r.sex).toBe('B');
     expect(r.pen_number).toBe('P15');
-    expect(r.p8_fat).toBe('8.5');            // trimOrNull → text
+    expect(r.p8_fat).toBe('8.5');            // trimOrNull Ã¢â€ â€™ text
     expect(r.lot_number).toBe('LOT50');
   });
 
-  // ── Treatment_Regimes ─────────────────────────────
-  it('Treatment_Regimes — all 7 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Treatment_Regimes Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Treatment_Regimes Ã¢â‚¬â€ all 7 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM health.treatment_regimes WHERE diseaseid = 50');
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -911,8 +875,8 @@ describe('Per-table column integration', () => {
     expect(r.userid).toBe(1);
   });
 
-  // ── Breeding_Sires ────────────────────────────────
-  it('Breeding_Sires — all 5 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Breeding_Sires Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Breeding_Sires Ã¢â‚¬â€ all 5 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM breeding.breeding_sires WHERE sire_id = 10');
     expect(rows).toHaveLength(1);
     expect(rows[0].sire_name).toBe('Champion Bull');
@@ -921,8 +885,8 @@ describe('Per-table column integration', () => {
     expect(rows[0].awa_sire_id).toBe('AWA999');
   });
 
-  // ── Locations ─────────────────────────────────────
-  it('Locations — all 7 columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Locations Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Locations Ã¢â‚¬â€ all 7 columns round-trip', async () => {
     const { rows } = await pgPool.query('SELECT * FROM transport.locations WHERE location_id = 1');
     expect(rows).toHaveLength(1);
     const r = rows[0];
@@ -933,13 +897,13 @@ describe('Per-table column integration', () => {
     expect(r.value_stored).toBeCloseTo(125000.00);
   });
 
-  // ── Ration_Descriptions ───────────────────────────
-  it('Ration_Descriptions — all key columns round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Ration_Descriptions Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Ration_Descriptions Ã¢â‚¬â€ all key columns round-trip', async () => {
     const { rows } = await pgPool.query("SELECT * FROM feed.rations WHERE ration_name = 'Starter'");
     expect(rows).toHaveLength(1);
     const r = rows[0];
     expect(r.ration_code).toBe(1);
-    expect(r.ration_type).toBeNull();          // toNum('Grain') → null
+    expect(r.ration_type).toBeNull();          // toNum('Grain') Ã¢â€ â€™ null
     expect(r.dry_matter_pcnt).toBeCloseTo(88.2);
     expect(r.current_value_kg).toBeCloseTo(0.35);
     expect(r.nem_kg).toBeCloseTo(1.65);
@@ -951,10 +915,10 @@ describe('Per-table column integration', () => {
     expect(r.stationary_mixer).toBe(true);
   });
 
-  // ── Breeds → system.lookups ───────────────────────
-  it('Breeds → system.lookups — code and name round-trip', async () => {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Breeds Ã¢â€ â€™ system.lookups Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  it('Breeds Ã¢â€ â€™ system.lookups Ã¢â‚¬â€ code and name round-trip', async () => {
     const { rows } = await pgPool.query("SELECT * FROM system.lookups WHERE category = 'breed' ORDER BY code");
     expect(rows.length).toBeGreaterThanOrEqual(1);
-    expect(rows[0].name).toBe('Angus');
+    expect(rows[0].label).toBe('Angus');
   });
 });

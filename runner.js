@@ -393,10 +393,10 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
       if (dryRun) {
         lookups.breedMap = await buildLookupFromSource(mssqlPool, 'Breeds', 'Breed_Code', 'Breed_Name');
       } else {
-        const res = await pgPool.query("SELECT code, name FROM system.lookups WHERE category = 'breed'");
+        const res = await pgPool.query("SELECT code, label FROM system.lookups WHERE category = 'breed'");
         lookups.breedMap = {};
         for (const row of res.rows) {
-          lookups.breedMap[row.code] = row.name;
+          lookups.breedMap[row.code] = row.label;
         }
       }
       log.info(`  Built breedMap: ${Object.keys(lookups.breedMap).length} entries`);
