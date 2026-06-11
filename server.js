@@ -24,6 +24,19 @@ const PORT = parseInt(process.env.UI_PORT || '3456', 10);
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ── Read-only mode ──────────────────────────────────
+// UI_READONLY=1 turns the dashboard into a pure monitor: every mutating
+// endpoint (migrate, wipe, create-db, restore, abort, settings, …) returns
+// 403 while SSE progress, status, logs and reports stay available.
+const READONLY = ['1', 'true', 'yes'].includes(String(process.env.UI_READONLY || '').toLowerCase());
+
+app.use((req, res, next) => {
+  if (READONLY && req.method !== 'GET') {
+    return res.status(403).json({ error: 'Dashboard is in read-only mode (UI_READONLY=1) — triggers are disabled.' });
+  }
+  next();
+});
+
 // ── State ───────────────────────────────────────────
 
 let migrationRunning = false;
@@ -339,7 +352,7 @@ function interceptConsole() {
 // ── API Routes ──────────────────────────────────────
 
 app.get('/api/status', (req, res) => {
-  res.json({ running: migrationRunning });
+  res.json({ running: migrationRunning, readonly: READONLY });
 });
 
 app.get('/api/settings', (req, res) => {
