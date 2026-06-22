@@ -406,15 +406,35 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
         // In dry-run: map Breed_Code → Breed_Code (no PG rows to look up)
         lookups.breedIdMap = await buildLookupFromSource(mssqlPool, 'Breeds', 'Breed_Code', 'Breed_Code');
       } else {
-        // Build Breed_Code → cattle.breeds.id via breedMap (Breed_Code → name) + breeds name → id
+        // Build Breed_Code → cattle.breeds.id via breedMap (Breed_Code → name) +
+        // breeds name → id. Match case/whitespace-insensitively, and auto-create
+        // any CFR breed name missing from cattle.breeds — otherwise a spelling or
+        // case mismatch against the app's canonical seed (e.g. CFR "ANGUS" vs
+        // seeded "Angus") silently resolves EVERY cow's breed to NULL (LSJH-390).
+        const norm = (s) => (s == null ? '' : String(s).trim().toLowerCase());
         const breedsRes = await pgPool.query('SELECT id, name FROM cattle.breeds');
         const nameToBreedId = {};
-        for (const row of breedsRes.rows) nameToBreedId[row.name] = row.id;
+        for (const row of breedsRes.rows) nameToBreedId[norm(row.name)] = row.id;
         lookups.breedIdMap = {};
+        let createdBreeds = 0;
         for (const [code, name] of Object.entries(lookups.breedMap || {})) {
-          const id = nameToBreedId[name];
-          if (id !== undefined) lookups.breedIdMap[code] = id;
+          const key = norm(name);
+          if (!key) continue; // skip blank/junk breed labels
+          let id = nameToBreedId[key];
+          if (id === undefined) {
+            // CFR breed name not present (in any case) — create it so the link
+            // survives instead of dropping the cow's breed to NULL.
+            const ins = await pgPool.query(
+              'INSERT INTO cattle.breeds (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id',
+              [String(name).trim()],
+            );
+            id = ins.rows[0].id;
+            nameToBreedId[key] = id;
+            createdBreeds += 1;
+          }
+          lookups.breedIdMap[code] = id;
         }
+        if (createdBreeds) log.info(`  Created ${createdBreeds} breed row(s) from CFR Breed_Name`);
       }
       log.info(`  Built breedIdMap: ${Object.keys(lookups.breedIdMap).length} entries`);
     }
