@@ -3908,6 +3908,11 @@ ALTER TABLE breeding.breeding_dams ADD COLUMN IF NOT EXISTS dam_supplier VARCHAR
 ALTER TABLE breeding.breeding_sires ADD COLUMN IF NOT EXISTS awa_sire_id VARCHAR(50) NULL;
 ALTER TABLE breeding.breeding_sires ADD COLUMN IF NOT EXISTS sire_line_id SMALLINT NULL;
 ALTER TABLE breeding.breeding_sires ADD COLUMN IF NOT EXISTS sire_supplier VARCHAR(50) NULL;
+-- cattle.cows raw legacy mirror columns (also normalized to purchase_lot_id / status / pen_id)
+ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS purch_lot_no VARCHAR(20) NULL;
+ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS died BOOLEAN NULL;
+ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS pen_number VARCHAR(20) NULL;
+ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS beastid INTEGER NULL;
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS abattoir_establishment_number INTEGER NULL;
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS carc_wght_left REAL NULL;
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS carc_wght_right REAL NULL;

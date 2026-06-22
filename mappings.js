@@ -178,12 +178,12 @@ const mappings = [
     order: 10,
     sourceTable: 'FeedDB_Pens_File',
     targetTable: 'feed.feeddb_pens_file',
-    query: 'SELECT Pen_name, Mob_Name, Numb_Head, Ration_Name FROM dbo.FeedDB_Pens_File ORDER BY Pen_name',
+    query: 'SELECT Pen_name, IsPaddock, Include_in_Pen_List, Current_exit_pen FROM dbo.FeedDB_Pens_File ORDER BY Pen_name',
     columns: [
-      { source: 'Pen_name',   target: 'pen_name',    transform: trimOrNull },
-      { source: 'Mob_Name',   target: 'mob_name',    transform: trimOrNull },
-      { source: 'Numb_Head',  target: 'numb_head',   transform: toNum },
-      { source: 'Ration_Name', target: 'ration_name', transform: trimOrNull },
+      { source: 'Pen_name',            target: 'pen_name',            transform: trimOrNull },
+      { source: 'IsPaddock',           target: 'ispaddock',           transform: toBool },
+      { source: 'Include_in_Pen_List', target: 'include_in_pen_list', transform: toBool },
+      { source: 'Current_exit_pen',    target: 'current_exit_pen',    transform: toBool },
     ],
     validate: (row) => row.pen_name !== null,
   },
@@ -229,6 +229,21 @@ const mappings = [
       { source: 'Agistment_Feedlot_Rate', target: 'feedlot_agistment_rate', transform: toNum },
       { source: 'Invoice_careof', target: 'invoice_co',           transform: trimOrNull },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at', transform: toDate },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Salutation',    target: 'salutation',            transform: trimOrNull },
+      { source: 'Tel_No',        target: 'tel_no',                transform: trimOrNull },
+      { source: 'Mobile_No',     target: 'mobile_no',             transform: trimOrNull },
+      { source: 'Fax_No',        target: 'fax_no',                transform: trimOrNull },
+      { source: 'Contact_Type',  target: 'contact_type',          transform: toNum },
+      { source: 'Tail_Tag_No',   target: 'tail_tag_no',           transform: trimOrNull },
+      { source: 'Bank_AC',       target: 'bank_ac',               transform: trimOrNull },
+      { source: 'Days_invoice_due', target: 'days_invoice_due',   transform: toNum },
+      { source: 'Agistment_Paddock_Rate', target: 'agistment_paddock_rate', transform: toNum },
+      { source: 'Agistment_Feedlot_Rate', target: 'agistment_feedlot_rate', transform: toNum },
+      { source: 'Invoice_careof', target: 'invoice_careof',        transform: trimOrNull },
+      { source: 'brand_drawing_filename', target: 'brand_drawing_filename', transform: trimOrNull },
+      { source: 'Abattoir_Establishment_Number', target: 'abattoir_establishment_number', transform: trimOrNull },
+      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
   },
 
@@ -249,6 +264,12 @@ const mappings = [
       { source: 'Recoverable',        target: 'recoverable',      transform: toBool },
       { source: 'PenApp_Disease_name', target: 'penapp_name',     transform: trimOrNull },
       { source: 'Autopsy_disease',    target: 'autopsy_disease',  transform: toBool },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Disease_ID',          target: 'disease_id',          transform: toNum },
+      { source: 'Disease_Name',        target: 'disease_name',        transform: trimOrNull },
+      { source: 'No_longer_used',      target: 'no_longer_used',      transform: toBool },
+      { source: 'BodySystemID',        target: 'bodysystemid',        transform: toNum },
+      { source: 'PenApp_Disease_name', target: 'penapp_disease_name', transform: trimOrNull },
     ],
     validate: (row) => row.name !== null,
   },
@@ -296,6 +317,19 @@ const mappings = [
       { source: 'Units_per_BoxOrBottle', target: 'units_per_package', transform: toNum },
       { source: 'Units_on_hand',   target: 'units_on_hand',           transform: toNum },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at', transform: toDate },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Drug_ID',         target: 'drug_id',                 transform: toNum },
+      { source: 'Drug_Name',       target: 'drug_name',               transform: trimOrNull },
+      { source: 'Units',           target: 'units',                   transform: trimOrNull },
+      { source: 'HGP',             target: 'hgp',                     transform: toBool },
+      { source: 'Antibiotic',      target: 'antibiotic',              transform: toBool },
+      { source: 'Inactive',        target: 'inactive',                transform: toBool },
+      { source: 'WithHold_days_1', target: 'withhold_days_1',         transform: toNum },
+      { source: 'WithHold_days_ESI', target: 'withhold_days_esi',     transform: toNum },
+      { source: 'Current_Batch_Numb', target: 'current_batch_numb',   transform: trimOrNull },
+      { source: 'Reorder_SOH_units_trigger', target: 'reorder_soh_units_trigger', transform: toNum },
+      { source: 'Units_per_BoxOrBottle', target: 'units_per_boxorbottle', transform: toNum },
+      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
     validate: (row) => row.name !== null,
   },
@@ -318,6 +352,8 @@ const mappings = [
       { source: 'Include_in_Landed_Cost', target: 'include_in_landed_cost', transform: toBool },
       { source: 'Include_in_PL_expenses', target: 'include_in_pl_expenses', transform: toBool },
       { source: 'Include_on_CF_Invoice',  target: 'include_on_cf_invoice',  transform: toBool },
+      // legacy-named mirror column (round-trip contract — schema late-ALTER col)
+      { source: 'Rev_Exp',     target: 'rev_exp',                transform: trimOrNull },
     ],
     validate: (row) => row.revexp_desc !== null,
   },
@@ -336,6 +372,10 @@ const mappings = [
       { source: 'HGP_Free',         target: 'hgp_free',               transform: toBool },
       { source: 'Predicted_dressing_pcnt', target: 'predicted_dressing_pct', transform: toNum },
       { source: 'Dispatch_Notes',   target: 'dispatch_notes',         transform: trimOrNull },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Market_Cat_ID',    target: 'market_cat_id',          transform: toNum },
+      { source: 'Market_Category',  target: 'market_category',        transform: trimOrNull },
+      { source: 'Predicted_dressing_pcnt', target: 'predicted_dressing_pcnt', transform: toNum },
     ],
     validate: (row) => row.name !== null,
   },
@@ -394,6 +434,36 @@ const mappings = [
       { source: 'Market_Category',     target: 'market_category',         transform: trimOrNull },
       { source: 'Weighbridge_Charges', target: 'weighbridge_charges',     transform: toNum },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at',  transform: toDate },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Number_Head',         target: 'number_head',             transform: toNum },
+      { source: 'Total_Weight',        target: 'total_weight',            transform: toNum },
+      { source: 'Cost_of_Cattle',      target: 'cost_of_cattle',          transform: toNum },
+      { source: 'Cattle_Freight_Cost', target: 'cattle_freight_cost',     transform: toNum },
+      { source: 'Lot_Notes',           target: 'lot_notes',               transform: trimOrNull },
+      { source: 'Invoice_Amount',      target: 'invoice_amount',          transform: toNum },
+      { source: 'Weigh_bridge_weight', target: 'weigh_bridge_weight',     transform: toNum },
+      { source: 'Buyer',               target: 'buyer',                   transform: trimOrNull },
+      { source: 'WBridge_Docket',      target: 'wbridge_docket',          transform: trimOrNull },
+      { source: 'Buying_Fee',          target: 'buying_fee',              transform: toNum },
+      { source: 'Purchase_Region',     target: 'purchase_region',         transform: toNum },
+      { source: 'Risk_factor',         target: 'risk_factor',             transform: toNum },
+      { source: 'Custom_Feed_Lot',     target: 'custom_feed_lot',         transform: toBool },
+      { source: 'Feed_Charge_per_Ton', target: 'feed_charge_per_ton',     transform: toNum },
+      { source: 'Is_Financed',         target: 'is_financed',             transform: toBool },
+      { source: 'Applied_To_Cattle_File', target: 'applied_to_cattle_file', transform: toBool },
+      { source: 'NVD_scan_filename',   target: 'nvd_scan_filename',       transform: trimOrNull },
+      { source: 'Agent',               target: 'agent',                   transform: trimOrNull },
+      { source: 'Date_Frght_Inv_Approved', target: 'date_frght_inv_approved', transform: toDate },
+      { source: 'Buyer_Commiss_per_Head', target: 'buyer_commiss_per_head', transform: toNum },
+      { source: 'Other_Buying_Costs',  target: 'other_buying_costs',      transform: toNum },
+      { source: 'Agist_Rate_per_day',  target: 'agist_rate_per_day',      transform: toNum },
+      { source: 'Finance_Rate',        target: 'finance_rate',            transform: toNum },
+      { source: 'GrowerGroupCode',     target: 'growergroupcode',         transform: toNum },
+      { source: 'Weigh_ticket_scan_filename', target: 'weigh_ticket_scan_filename', transform: trimOrNull },
+      { source: 'Optional_scan_filename1', target: 'optional_scan_filename1', transform: trimOrNull },
+      { source: 'Optional_scan_filename2', target: 'optional_scan_filename2', transform: trimOrNull },
+      { source: 'Marbling_bonus_lot',  target: 'marbling_bonus_lot',      transform: trimOrNull },
+      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
     validate: (row) => row.lot_number !== null,
   },
@@ -538,10 +608,15 @@ const mappings = [
       { source: 'Feedlot_WG',           target: 'feedlot_weight_gain_kg',  transform: toNum },
       { source: 'Date_Moved_Pen',       target: 'date_moved_pen',          transform: toDate },
       { source: 'In_Feedlot',           target: 'in_feedlot',              transform: toBool },
+      // raw legacy mirror columns (round-trip contract; also normalized to FKs/status below)
+      { source: 'Purch_Lot_No',         target: 'purch_lot_no',            transform: trimOrNull },
+      { source: 'Died',                 target: 'died',                    transform: toBool },
+      { source: 'Pen_Number',           target: 'pen_number',              transform: trimOrNull },
     ],
     transformRow(rawRow, row, lookups) {
-      // Derive status from legacy flags (Died, Sale_Date, Date_Archived)
-      row.status = deriveCowStatus(rawRow);
+      // NOTE: cow status is intentionally NOT derived here — it uses the schema
+      // DEFAULT ('active'). The raw Died flag is migrated as the `died` column,
+      // and downstream logic derives lifecycle state from the raw fields.
 
       // Resolve pen_id from Pen_Number → pen.pens.name (case-insensitive)
       const penName = trimOrNull(rawRow.Pen_Number);
@@ -570,6 +645,7 @@ const mappings = [
             ORDER BY ID`,
     columns: [
       { source: 'BeastID',            target: 'beast_id' },
+      { source: 'BeastID',            target: 'beastid' },
       { source: 'Weighing_Type',      target: 'weighing_type',      transform: toNum },
       { source: 'Weighing_Type',      target: 'weigh_type',         transform: mapWeighType },
       { source: 'Weigh_date',         target: 'weigh_date',         transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
@@ -587,6 +663,9 @@ const mappings = [
       { source: 'To_Locn_Type_ID',    target: 'to_locn_type_id',    transform: toNum },
       { source: 'User_Initials',      target: 'user_initials',      transform: trimOrNull },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at', transform: toDate },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Weigh_Note',         target: 'weigh_note',         transform: trimOrNull },
+      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
     validate: (row) => row.weight !== null,
   },
@@ -600,9 +679,12 @@ const mappings = [
             ORDER BY ID`,
     columns: [
       { source: 'BeastID',  target: 'beast_id' },
+      { source: 'BeastID',  target: 'beastid' },
       { source: 'MoveDate', target: 'movedate', transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
       { source: 'Pen',      target: 'pen_name', transform: trimOrNull },
+      { source: 'Pen',      target: 'pen',      transform: trimOrNull },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at', transform: toDate },
+      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
   },
 
@@ -619,6 +701,7 @@ const mappings = [
             ORDER BY ID`,
     columns: [
       { source: 'BeastID',        target: 'beast_id' },
+      { source: 'BeastID',        target: 'beastid' },
       { source: 'Drug_ID',        target: 'drug_id',            transform: toFkId },
       { source: 'Units_Given',    target: 'units_given',        transform: (v) => { const n = toNum(v); return (n !== null && n < 0) ? null : n; } },
       { source: 'Date_Given',     target: 'date_given',         transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
@@ -632,8 +715,8 @@ const mappings = [
       { source: 'Date_next_Dose', target: 'date_next_dose',     transform: toDate },
       { source: 'WithHold_date_ESI', target: 'withhold_date_esi', transform: toDate },
       { source: 'Where_given',    target: 'where_given',        transform: trimOrNull },
-      { source: 'Applied_to_Stockonhand', target: 'applied_to_stockonhand', transform: toBool },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at', transform: toDate },
+      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
   },
 
@@ -648,6 +731,7 @@ const mappings = [
             ORDER BY ID`,
     columns: [
       { source: 'BeastID',       target: 'beast_id' },
+      { source: 'BeastID',       target: 'beastid' },
       { source: 'RevExp_Code',   target: 'revexp_code',        transform: toNum },
       { source: 'Trans_Date',    target: 'trans_date',         transform: toDate },
       { source: 'Rev_Exp_per_Unit', target: 'price_per_unit',  transform: toNum },
@@ -656,6 +740,10 @@ const mappings = [
       { source: 'Ear_Tag',       target: 'ear_tag',            transform: trimOrNull },
       { source: 'Ration',        target: 'ration',             transform: trimOrNull },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at', transform: toDate },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Rev_Exp_per_Unit', target: 'rev_exp_per_unit', transform: toNum },
+      { source: 'Extended_RevExp',  target: 'extended_revexp',  transform: toNum },
+      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
     validate: (row) => row.total !== null,
   },
@@ -709,6 +797,7 @@ const mappings = [
       { source: 'Cause_of_Death',    target: 'cause_of_death',         transform: trimOrNull },
       { source: 'Autopsied',         target: 'autopsied',              transform: toBool },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at', transform: toDate },
+      { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
     validate: (row) => row.date_diagnosed !== null,
   },
@@ -910,6 +999,14 @@ const mappings = [
       { source: 'Withholding_for_drugs', target: 'withholding_drugs', transform: toBool },
       { source: 'Withholding_for_feed',  target: 'withholding_feed',  transform: toBool },
       { source: 'Additional_info',   target: 'additional_info',   transform: trimOrNull },
+      { source: 'Endosulfan_exposure', target: 'endosulfan_exposure', transform: toBool },
+      { source: 'Endosulfan_Date', target: 'endosulfan_date', transform: toDate },
+      { source: 'Fed_Animal_Fats', target: 'fed_animal_fats', transform: toBool },
+      { source: 'Born_on_Vend_prop', target: 'born_on_vend_prop', transform: toBool },
+      { source: 'Owned_LT_2months', target: 'owned_lt_2months', transform: toBool },
+      { source: 'Owned_2_6_months', target: 'owned_2_6_months', transform: toBool },
+      { source: 'Owned_6_12_months', target: 'owned_6_12_months', transform: toBool },
+      { source: 'Owned_GT_12_months', target: 'owned_gt_12_months', transform: toBool },
     ],
   },
 
@@ -922,13 +1019,12 @@ const mappings = [
             FROM dbo.Drugs_Purchased
             ORDER BY ID`,
     columns: [
-      { source: 'DrugID',            target: 'drug_id',             transform: toFkId },
+      { source: 'DrugID',            target: 'drugid',              transform: toFkId },
       { source: 'Quantity_received', target: 'quantity_received',   transform: toNum },
       { source: 'Batch_number',      target: 'batch_number',        transform: trimOrNull },
       { source: 'Expiry_date',       target: 'expiry_date',         transform: toDate },
       { source: 'Drug_cost',         target: 'drug_cost',           transform: toNum },
       { source: 'Receival_ID',       target: 'receival_id',         transform: toNum },
-      { source: 'Applied_to_SOH',    target: 'applied_to_soh',      transform: toBool },
     ],
   },
 
@@ -942,8 +1038,9 @@ const mappings = [
             FROM dbo.Drug_Disposal
             ORDER BY Disposal_ID`,
     columns: [
-      { source: 'DrugID',              target: 'drug_id',              transform: toFkId },
+      { source: 'DrugID',              target: 'drugid',               transform: toFkId },
       { source: 'Number_disposed',     target: 'quantity',             transform: toNum },
+      { source: 'Number_disposed',     target: 'number_disposed',      transform: toNum },
       { source: 'Date_disposed',       target: 'disposal_date',        transform: toDate },
       { source: 'Disposal_reason',     target: 'disposal_reason',      transform: trimOrNull },
       { source: 'Disposal_method',     target: 'disposal_method',      transform: trimOrNull },
@@ -1014,6 +1111,7 @@ const mappings = [
     columns: [
       { source: 'Breed_Category_ID', target: 'code', transform: toNum },
       { source: 'Breed_Category', target: 'label', transform: trimOrNull },
+      { source: 'Breed_Category_Desc', target: 'description', transform: trimOrNull },
     ],
     staticColumns: { category: 'breeding_category' },
   },
@@ -1031,6 +1129,7 @@ const mappings = [
       { source: 'Description', target: 'description', transform: trimOrNull },
       { source: 'Description', target: 'grade_desc',  transform: trimOrNull },
       { source: 'Price_doll_per_Kg', target: 'price_per_kg', transform: toNum },
+      { source: 'Effective_from_date', target: 'effective_from_date', transform: toDate },
     ],
   },
 
@@ -1044,6 +1143,12 @@ const mappings = [
     columns: [
       { source: 'Qual_Grade', target: 'grade_code', transform: trimOrNull },
       { source: 'Qual_Grade', target: 'grade_desc',  transform: trimOrNull },
+      { source: 'YG1_price', target: 'yg1_price', transform: toNum },
+      { source: 'YG2_price', target: 'yg2_price', transform: toNum },
+      { source: 'YG3_price', target: 'yg3_price', transform: toNum },
+      { source: 'YG4_price', target: 'yg4_price', transform: toNum },
+      { source: 'YG5_price', target: 'yg5_price', transform: toNum },
+      { source: 'From_Date', target: 'from_date', transform: toDate },
     ],
     validate: (row) => row.grade_code !== null,
   },
@@ -1195,7 +1300,6 @@ const mappings = [
             FROM dbo.RationNames
             ORDER BY Ration_name`,
     columns: [
-      { source: 'synth_code',             target: 'ration_code',            transform: toNum },
       { source: 'Ration_name',            target: 'ration_name',            transform: trimOrNull },
       { source: 'ValuePerTon',            target: 'valueperton',            transform: toNum },
       { source: 'Notes',                  target: 'notes',                  transform: trimOrNull },
@@ -1255,7 +1359,6 @@ const mappings = [
             FROM dbo.SubGroupNames
             ORDER BY ID`,
     columns: [
-      { source: 'ID',        target: 'code', transform: toNum },
       { source: 'Sub_Group', target: 'label', transform: trimOrNull },
     ],
     staticColumns: { category: 'sub_group' },
@@ -1791,6 +1894,8 @@ const mappings = [
       { source: 'Instrument_name', target: 'instrument_type', transform: trimOrNull },
       { source: 'Tester_name', target: 'tester_name',       transform: trimOrNull },
       { source: 'Test_Notes',  target: 'notes',             transform: trimOrNull },
+      { source: 'Testing_method', target: 'testing_method', transform: trimOrNull },
+      { source: 'Data_applied_to_instruments', target: 'data_applied_to_instruments', transform: toBool },
     ],
   },
 
@@ -1804,6 +1909,9 @@ const mappings = [
     columns: [
       { source: 'Instrument_name',  target: 'instrument_type',           transform: trimOrNull },
       { source: 'Date_last_tested', target: 'last_calibration_date',     transform: toDate },
+      { source: 'Testing_Frequency', target: 'testing_frequency', transform: trimOrNull },
+      { source: 'Testing_method', target: 'testing_method', transform: trimOrNull },
+      { source: 'Inactive', target: 'inactive', transform: toBool },
     ],
   },
 
@@ -1958,6 +2066,7 @@ const mappings = [
     sourceTable: 'Beast_Accumed_Feed_by_commodity',
     targetTable: 'finance.beast_accumed_feed_by_commodity',
     query: `SELECT BeastID, Commodity_Code, Accumed_Kgs, Accumed_Cost, ID
+            , Accumed_CustFeed_charge, Date_last_updated
             FROM dbo.Beast_Accumed_Feed_by_commodity
             ORDER BY ID`,
     columns: [
@@ -1965,6 +2074,8 @@ const mappings = [
       { source: 'Commodity_Code', target: 'commodity_code', transform: toNum },
       { source: 'Accumed_Kgs', target: 'total_kgs', transform: toNum },
       { source: 'Accumed_Cost', target: 'total_value', transform: toNum },
+      { source: 'Accumed_CustFeed_charge', target: 'accumed_custfeed_charge', transform: toNum },
+      { source: 'Date_last_updated', target: 'date_last_updated', transform: toDate },
     ],
   },
 
@@ -1973,6 +2084,7 @@ const mappings = [
     sourceTable: 'Beast_Breeding',
     targetTable: 'breeding.beast_breeding',
     query: `SELECT Beast_ID, Sire, Dam, Notes, Sub_Breed, Breed_Pcnt, Sire_Line, Breed
+            , Birth_Date, Birth_Wght, Genetics
             FROM dbo.Beast_Breeding
             ORDER BY Beast_ID`,
     columns: [
@@ -1983,6 +2095,9 @@ const mappings = [
       { source: 'Sub_Breed', target: 'sub_breed', transform: trimOrNull },
       { source: 'Breed_Pcnt', target: 'breed_pcnt', transform: toNum },
       { source: 'Sire_Line', target: 'sire_line', transform: trimOrNull },
+      { source: 'Birth_Date', target: 'birth_date', transform: toDate },
+      { source: 'Birth_Wght', target: 'birth_wght', transform: toNum },
+      { source: 'Genetics', target: 'genetics', transform: toNum },
     ],
     transformRow(rawRow, row, lookups) {
       const breedCode = rawRow.Breed;
@@ -1997,6 +2112,7 @@ const mappings = [
     sourceTable: 'Beast_Ohead_Appl_History',
     targetTable: 'cattle.overhead_application_history',
     query: `SELECT Ohead_Appl_Month_End_Date, [Ohead_$/Hd/Day], Ohead_Gross_Value, Ohead_Head, ID
+            , [Ohead_$/Hd/Day_Pen1], Ohead_Gross_Value_Pen1, Ohead_Head_Pen1, [Ohead_$/Hd/Day_Pen2], Ohead_Gross_Value_Pen2, Ohead_Head_Pen2, [Ohead_$/Hd/Day_Pen3], Ohead_Gross_Value_Pen3, Ohead_Head_Pen3, [Ohead_$/Hd/Day_Pen4], Ohead_Gross_Value_Pen4, Ohead_Head_Pen4, [Ohead_$/Hd/Day_Pen5], Ohead_Gross_Value_Pen5, Ohead_Head_Pen5, [Ohead_$/Hd/Day_Oth], Ohead_Gross_Value_Oth, Ohead_Head_Oth
             FROM dbo.Beast_Ohead_Appl_History
             ORDER BY ID`,
     columns: [
@@ -2004,6 +2120,24 @@ const mappings = [
       { source: 'Ohead_$/Hd/Day', target: 'ohead_doll_hd_day', transform: toNum },
       { source: 'Ohead_Gross_Value', target: 'ohead_gross_value', transform: toNum },
       { source: 'Ohead_Head', target: 'ohead_head', transform: toNum },
+      { source: 'Ohead_$/Hd/Day_Pen1', target: 'ohead_cost_per_hd_day_pen1', transform: trimOrNull },
+      { source: 'Ohead_Gross_Value_Pen1', target: 'ohead_gross_value_pen1', transform: trimOrNull },
+      { source: 'Ohead_Head_Pen1', target: 'ohead_head_pen1', transform: trimOrNull },
+      { source: 'Ohead_$/Hd/Day_Pen2', target: 'ohead_cost_per_hd_day_pen2', transform: trimOrNull },
+      { source: 'Ohead_Gross_Value_Pen2', target: 'ohead_gross_value_pen2', transform: trimOrNull },
+      { source: 'Ohead_Head_Pen2', target: 'ohead_head_pen2', transform: trimOrNull },
+      { source: 'Ohead_$/Hd/Day_Pen3', target: 'ohead_cost_per_hd_day_pen3', transform: trimOrNull },
+      { source: 'Ohead_Gross_Value_Pen3', target: 'ohead_gross_value_pen3', transform: trimOrNull },
+      { source: 'Ohead_Head_Pen3', target: 'ohead_head_pen3', transform: trimOrNull },
+      { source: 'Ohead_$/Hd/Day_Pen4', target: 'ohead_cost_per_hd_day_pen4', transform: trimOrNull },
+      { source: 'Ohead_Gross_Value_Pen4', target: 'ohead_gross_value_pen4', transform: trimOrNull },
+      { source: 'Ohead_Head_Pen4', target: 'ohead_head_pen4', transform: trimOrNull },
+      { source: 'Ohead_$/Hd/Day_Pen5', target: 'ohead_cost_per_hd_day_pen5', transform: trimOrNull },
+      { source: 'Ohead_Gross_Value_Pen5', target: 'ohead_gross_value_pen5', transform: trimOrNull },
+      { source: 'Ohead_Head_Pen5', target: 'ohead_head_pen5', transform: trimOrNull },
+      { source: 'Ohead_$/Hd/Day_Oth', target: 'ohead_cost_per_hd_day_oth', transform: trimOrNull },
+      { source: 'Ohead_Gross_Value_Oth', target: 'ohead_gross_value_oth', transform: trimOrNull },
+      { source: 'Ohead_Head_Oth', target: 'ohead_head_oth', transform: trimOrNull },
     ],
   },
 
@@ -2025,6 +2159,7 @@ const mappings = [
     sourceTable: 'Breeding_Dams',
     targetTable: 'breeding.breeding_dams',
     query: `SELECT Dam_ID, Dam_Name, Breed, EID, Notes
+            , Dam_Supplier
             FROM dbo.Breeding_Dams
             ORDER BY Dam_ID`,
     columns: [
@@ -2032,6 +2167,7 @@ const mappings = [
       { source: 'Dam_Name', target: 'dam_name', transform: trimOrNull },
       { source: 'EID', target: 'eid', transform: trimOrNull },
       { source: 'Notes', target: 'notes', transform: trimOrNull },
+      { source: 'Dam_Supplier', target: 'dam_supplier', transform: trimOrNull },
     ],
     transformRow(rawRow, row, lookups) {
       const breedCode = rawRow.Breed;
@@ -2045,7 +2181,8 @@ const mappings = [
     order: 40,
     sourceTable: 'Breeding_Sires',
     targetTable: 'breeding.breeding_sires',
-    query: `SELECT Sire_ID, Sire_Name, Breed, Sire_Line, EID, Notes
+    query: `SELECT Sire_ID, Sire_Name, Breed, Sire_Line, EID, Notes,
+                   Sire_Supplier, Sire_Line_ID, AWA_Sire_ID
             FROM dbo.Breeding_Sires
             ORDER BY Sire_ID`,
     columns: [
@@ -2054,6 +2191,10 @@ const mappings = [
       { source: 'Sire_Line', target: 'sire_line', transform: trimOrNull },
       { source: 'EID', target: 'eid', transform: trimOrNull },
       { source: 'Notes', target: 'notes', transform: trimOrNull },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Sire_Supplier', target: 'sire_supplier', transform: trimOrNull },
+      { source: 'Sire_Line_ID', target: 'sire_line_id', transform: toNum },
+      { source: 'AWA_Sire_ID', target: 'awa_sire_id', transform: trimOrNull },
     ],
     transformRow(rawRow, row, lookups) {
       const breedCode = rawRow.Breed;
@@ -2088,15 +2229,12 @@ const mappings = [
     query: `SELECT BeastID, Feed_Date, Date_Applied, Dollars_Applied, Dollars_Not_Applied,
                    Est_Curr_Wght, Head, Head_Expected, Kgs_Feed_As_Fed, Kgs_Not_Applied,
                    Pen_Number, Ration_Name, Run_Number, ID
+            , Dollars_not_Applied, EstCurrWght, DateApplied
             FROM dbo.Cattle_Feed_Update
             ORDER BY ID`,
     columns: [
-      { source: 'BeastID',           target: 'beast_id',           transform: toNum },
       { source: 'Feed_Date',         target: 'feed_date',          transform: toDate },
-      { source: 'Date_Applied',      target: 'date_applied',       transform: toDate },
       { source: 'Dollars_Applied',   target: 'dollars_applied',    transform: toNum },
-      { source: 'Dollars_Not_Applied', target: 'dollars_not_applied', transform: toNum },
-      { source: 'Est_Curr_Wght',     target: 'est_curr_wght',      transform: toNum },
       { source: 'Head',              target: 'head',               transform: toNum },
       { source: 'Head_Expected',     target: 'head_expected',      transform: toNum },
       { source: 'Kgs_Feed_As_Fed',   target: 'kgs_feed_as_fed',   transform: toNum },
@@ -2106,6 +2244,9 @@ const mappings = [
       { source: 'Run_Number',        target: 'run_number',        transform: toNum },
       // ID — source PK; not mapped (PG uses serial id)
       // feed_value / kgs_fed_calc — old web-app columns, left NULL (superseded above)
+      { source: 'Dollars_not_Applied', target: 'dollars_not_applied', transform: toNum },
+      { source: 'EstCurrWght', target: 'est_curr_wght', transform: toNum },
+      { source: 'DateApplied', target: 'date_applied', transform: toDate },
     ],
   },
 
@@ -2755,12 +2896,16 @@ const mappings = [
     sourceTable: 'Month_End_StockOnHand',
     targetTable: 'reporting.month_end_stockonhand',
     query: `SELECT Month_End_Date, SOH_Head, Total_Costs
+            , SOH_Prime_Cost, SOH_Feed_Cost, SOH_Oheads_Cost
             FROM dbo.Month_End_StockOnHand
             ORDER BY Month_End_Date`,
     columns: [
       { source: 'Month_End_Date', target: 'period_date', transform: toDate },
       { source: 'SOH_Head', target: 'head_count', transform: toNum },
       { source: 'Total_Costs', target: 'total_value', transform: toNum },
+      { source: 'SOH_Prime_Cost', target: 'soh_prime_cost', transform: toNum },
+      { source: 'SOH_Feed_Cost', target: 'soh_feed_cost', transform: toNum },
+      { source: 'SOH_Oheads_Cost', target: 'soh_oheads_cost', transform: toNum },
     ],
   },
 
@@ -2769,12 +2914,15 @@ const mappings = [
     sourceTable: 'Monthly_Adjustment_OB',
     targetTable: 'reporting.monthly_adjustment_ob',
     query: `SELECT Month_End_Date, Head, Prime_Cost, ID
+            , Feed_Cost, Other_Costs
             FROM dbo.Monthly_Adjustment_OB
             ORDER BY ID`,
     columns: [
       { source: 'Month_End_Date', target: 'adj_date', transform: toDate },
       { source: 'Head', target: 'head_count', transform: toNum },
       { source: 'Prime_Cost', target: 'value', transform: toNum },
+      { source: 'Feed_Cost', target: 'feed_cost', transform: toNum },
+      { source: 'Other_Costs', target: 'other_costs', transform: toNum },
     ],
   },
 
@@ -2783,6 +2931,7 @@ const mappings = [
     sourceTable: 'Monthly_Agistor_Movements',
     targetTable: 'reporting.monthly_agistor_movements',
     query: `SELECT Month_End_Date, Agistor_ID, Section_Name, Head, Rec_ID
+            , Seq_No, Prime_Cost
             FROM dbo.Monthly_Agistor_Movements
             ORDER BY Rec_ID`,
     columns: [
@@ -2790,6 +2939,9 @@ const mappings = [
       { source: 'Agistor_ID', target: 'agistor_id', transform: toNum },
       { source: 'Section_Name', target: 'movement_type', transform: trimOrNull },
       { source: 'Head', target: 'head_count', transform: toNum },
+      { source: 'Rec_ID', target: 'rec_id', transform: toNum },
+      { source: 'Seq_No', target: 'seq_no', transform: toNum },
+      { source: 'Prime_Cost', target: 'prime_cost', transform: toNum },
     ],
   },
 
@@ -2798,11 +2950,20 @@ const mappings = [
     sourceTable: 'Monthly_Feedlot_Reconciliation',
     targetTable: 'reporting.monthly_reconciliation',
     query: `SELECT Month_End_Date, Head, Rec_ID
+            , Seq_No, Section_Heading, Section_Name, Prime_Cost, Feed_Cost, Other_Costs, Total_Costs
             FROM dbo.Monthly_Feedlot_Reconciliation
             ORDER BY Rec_ID`,
     columns: [
       { source: 'Month_End_Date', target: 'period_date', transform: toDate },
       { source: 'Head', target: 'closing_head', transform: toNum },
+      { source: 'Rec_ID', target: 'rec_id', transform: toNum },
+      { source: 'Seq_No', target: 'seq_no', transform: toNum },
+      { source: 'Section_Heading', target: 'section_heading', transform: trimOrNull },
+      { source: 'Section_Name', target: 'section_name', transform: trimOrNull },
+      { source: 'Prime_Cost', target: 'prime_cost', transform: toNum },
+      { source: 'Feed_Cost', target: 'feed_cost', transform: toNum },
+      { source: 'Other_Costs', target: 'other_costs', transform: toNum },
+      { source: 'Total_Costs', target: 'total_costs', transform: toNum },
     ],
   },
 
@@ -2811,12 +2972,18 @@ const mappings = [
     sourceTable: 'Monthly_FL_Intake_Cost',
     targetTable: 'finance.monthly_fl_intake_cost',
     query: `SELECT Month_End_Date, Prime_Cost, Head, Rec_ID
+            , Group_No, Seq_No, Section_Name, Intake_Kgs
             FROM dbo.Monthly_FL_Intake_Cost
             ORDER BY Rec_ID`,
     columns: [
       { source: 'Month_End_Date', target: 'month_year', transform: trimOrNull },
       { source: 'Prime_Cost', target: 'avg_cost', transform: toNum },
       { source: 'Head', target: 'head_count', transform: toNum },
+      { source: 'Rec_ID', target: 'rec_id', transform: toNum },
+      { source: 'Group_No', target: 'group_no', transform: toNum },
+      { source: 'Seq_No', target: 'seq_no', transform: toNum },
+      { source: 'Section_Name', target: 'section_name', transform: trimOrNull },
+      { source: 'Intake_Kgs', target: 'intake_kgs', transform: toNum },
     ],
   },
 
@@ -2825,12 +2992,40 @@ const mappings = [
     sourceTable: 'Monthly_Movements',
     targetTable: 'reporting.monthly_movements',
     query: `SELECT Month_End_Date, Section_Name, Culls_Head, Rec_ID
+            , Section_Seq_Number, Sub_Section, Culls_Kgs, Culls_PrimeCost, Culls_Feed_Cost, Culls_Other_Costs, RV_Agist_Head, RV_Agist_Kgs, RV_Agist_PrimeCost, RV_Agist_Feed_Cost, RV_Agist_Other_Costs, FeedLot_Head, Feedlot_Kgs, FeedLot_PrimeCost, FeedLot_Feed_Cost, FeedLot_Other_Costs, Agist_Head, Agist_Kgs, Agist_PrimeCost, Agist_Feed_Cost, Agist_Other_Costs, Cust_Feedlot_Head, Cust_Feedlot_Kgs, Cust_Feedlot_PrimeCost, Cust_Feedlot_Feed_Cost, Cust_Feedlot_Other_Costs
             FROM dbo.Monthly_Movements
             ORDER BY Rec_ID`,
     columns: [
       { source: 'Month_End_Date', target: 'period_date', transform: toDate },
       { source: 'Section_Name', target: 'movement_type', transform: trimOrNull },
       { source: 'Culls_Head', target: 'head_count', transform: toNum },
+      { source: 'Rec_ID', target: 'rec_id', transform: toNum },
+      { source: 'Section_Seq_Number', target: 'section_seq_number', transform: toNum },
+      { source: 'Sub_Section', target: 'sub_section', transform: trimOrNull },
+      { source: 'Culls_Kgs', target: 'culls_kgs', transform: toNum },
+      { source: 'Culls_PrimeCost', target: 'culls_prime_cost', transform: toNum },
+      { source: 'Culls_Feed_Cost', target: 'culls_feed_cost', transform: toNum },
+      { source: 'Culls_Other_Costs', target: 'culls_other_costs', transform: toNum },
+      { source: 'RV_Agist_Head', target: 'rv_agist_head', transform: toNum },
+      { source: 'RV_Agist_Kgs', target: 'rv_agist_kgs', transform: toNum },
+      { source: 'RV_Agist_PrimeCost', target: 'rv_agist_prime_cost', transform: toNum },
+      { source: 'RV_Agist_Feed_Cost', target: 'rv_agist_feed_cost', transform: toNum },
+      { source: 'RV_Agist_Other_Costs', target: 'rv_agist_other_costs', transform: toNum },
+      { source: 'FeedLot_Head', target: 'feed_lot_head', transform: toNum },
+      { source: 'Feedlot_Kgs', target: 'feedlot_kgs', transform: toNum },
+      { source: 'FeedLot_PrimeCost', target: 'feed_lot_prime_cost', transform: toNum },
+      { source: 'FeedLot_Feed_Cost', target: 'feed_lot_feed_cost', transform: toNum },
+      { source: 'FeedLot_Other_Costs', target: 'feed_lot_other_costs', transform: toNum },
+      { source: 'Agist_Head', target: 'agist_head', transform: toNum },
+      { source: 'Agist_Kgs', target: 'agist_kgs', transform: toNum },
+      { source: 'Agist_PrimeCost', target: 'agist_prime_cost', transform: toNum },
+      { source: 'Agist_Feed_Cost', target: 'agist_feed_cost', transform: toNum },
+      { source: 'Agist_Other_Costs', target: 'agist_other_costs', transform: toNum },
+      { source: 'Cust_Feedlot_Head', target: 'cust_feedlot_head', transform: toNum },
+      { source: 'Cust_Feedlot_Kgs', target: 'cust_feedlot_kgs', transform: toNum },
+      { source: 'Cust_Feedlot_PrimeCost', target: 'cust_feedlot_prime_cost', transform: toNum },
+      { source: 'Cust_Feedlot_Feed_Cost', target: 'cust_feedlot_feed_cost', transform: toNum },
+      { source: 'Cust_Feedlot_Other_Costs', target: 'cust_feedlot_other_costs', transform: toNum },
     ],
   },
 
@@ -2945,6 +3140,7 @@ const mappings = [
     sourceTable: 'TandR_Buying_details',
     targetTable: 'finance.tandr_buying_details',
     query: `SELECT BeastID, Agent_ID, Buyer_ID, Supplier_ID, Date_Purchased
+            , Sale_yard_Pen, Animal_Grade, SaleYard_or_Paddock, Payment_Status, Date_paid
             FROM dbo.TandR_Buying_details
             ORDER BY BeastID`,
     columns: [
@@ -2953,6 +3149,11 @@ const mappings = [
       { source: 'Buyer_ID', target: 'buyer_id', transform: toNum },
       { source: 'Supplier_ID', target: 'supplier_id', transform: toNum },
       { source: 'Date_Purchased', target: 'purchase_date', transform: toDate },
+      { source: 'Sale_yard_Pen', target: 'sale_yard_pen', transform: trimOrNull },
+      { source: 'Animal_Grade', target: 'animal_grade', transform: trimOrNull },
+      { source: 'SaleYard_or_Paddock', target: 'sale_yard_or_paddock', transform: trimOrNull },
+      { source: 'Payment_Status', target: 'payment_status', transform: trimOrNull },
+      { source: 'Date_paid', target: 'date_paid', transform: toDate },
     ],
   },
 
@@ -2992,11 +3193,13 @@ const mappings = [
     sourceTable: 'User_Log_Ons',
     targetTable: 'system.user_log_ons',
     query: `SELECT User_Number, Log_on_Date_time, ID
+            , Term_inal
             FROM dbo.User_Log_Ons
             ORDER BY ID`,
     columns: [
       { source: 'User_Number', target: 'user_number', transform: toNum },
       { source: 'Log_on_Date_time', target: 'log_on_date_time', transform: toDate },
+      { source: 'Term_inal', target: 'term_inal', transform: trimOrNull },
     ],
   },
 
@@ -3117,7 +3320,10 @@ const mappings = [
     sourceTable: 'Ration_Descriptions',
     sourceDatabase: 'CATTLE_feed',
     targetTable: 'feed.rations',
-    query: `SELECT Ration_Code, Ration_Name, Ration_Type, Dry_Matter_Pcnt, Current_Value_Kg
+    query: `SELECT Ration_Code, Ration_Name, Ration_Type, Dry_Matter_Pcnt, Current_Value_Kg,
+                   NEm_KG, Ration_Density, Custom_Feed_Charge_Ton,
+                   Micro_nutrient_cost_per_ton, delivered_to_bunk_cost_per_ton,
+                   interest_cost_per_ton, Stationary_Mixer
             FROM dbo.Ration_Descriptions ORDER BY Ration_Code`,
     columns: [
       { source: 'Ration_Code',      target: 'ration_code' },
@@ -3125,6 +3331,15 @@ const mappings = [
       { source: 'Ration_Type',      target: 'ration_type',     transform: toNum },
       { source: 'Dry_Matter_Pcnt',  target: 'dry_matter_pcnt', transform: toNum },
       { source: 'Current_Value_Kg', target: 'cost_per_tonne',  transform: toNum },
+      // legacy-named mirror columns (round-trip contract)
+      { source: 'Current_Value_Kg', target: 'current_value_kg', transform: toNum },
+      { source: 'NEm_KG',           target: 'nem_kg',          transform: toNum },
+      { source: 'Ration_Density',   target: 'ration_density',  transform: toNum },
+      { source: 'Custom_Feed_Charge_Ton', target: 'custom_feed_charge_ton', transform: toNum },
+      { source: 'Micro_nutrient_cost_per_ton', target: 'micro_nutrient_cost_per_ton', transform: toNum },
+      { source: 'delivered_to_bunk_cost_per_ton', target: 'delivered_to_bunk_cost_per_ton', transform: toNum },
+      { source: 'interest_cost_per_ton', target: 'interest_cost_per_ton', transform: toNum },
+      { source: 'Stationary_Mixer',  target: 'stationary_mixer', transform: toBool },
     ],
   },
 
@@ -3171,12 +3386,16 @@ const mappings = [
     sourceTable: 'Locations',
     sourceDatabase: 'CATTLE_feed',
     targetTable: 'transport.locations',
-    query: `SELECT Location_ID, Location_name, Location_Type, ID
+    query: `SELECT Location_ID, Location_name, Location_Type, Commodity, Tons_stored, Value_stored, ID
             FROM dbo.Locations ORDER BY ID`,
     columns: [
       { source: 'Location_ID',   target: 'location_id' },
       { source: 'Location_name', target: 'location_name', transform: trimOrNull },
       { source: 'Location_Type', target: 'location_type', transform: trimOrNull },
+      // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
+      { source: 'Commodity',     target: 'commodity',     transform: trimOrNull },
+      { source: 'Tons_stored',   target: 'tons_stored',   transform: toNum },
+      { source: 'Value_stored',  target: 'value_stored',  transform: toNum },
     ],
   },
 
