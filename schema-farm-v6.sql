@@ -4058,6 +4058,8 @@ ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg2_price NUMERIC
 ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg3_price NUMERIC(12,4) NULL;
 ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg4_price NUMERIC(12,4) NULL;
 ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg5_price NUMERIC(12,4) NULL;
+-- LSJH-214 — US carcase-grade lookup gets an active flag, matching the AUS variant.
+ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE carcase.carcase_import_data ADD COLUMN IF NOT EXISTS col1 TEXT;
 ALTER TABLE carcase.carcase_import_data ADD COLUMN IF NOT EXISTS col10 TEXT;
 ALTER TABLE carcase.carcase_import_data ADD COLUMN IF NOT EXISTS col11 TEXT;
