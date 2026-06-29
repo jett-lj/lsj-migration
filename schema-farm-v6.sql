@@ -654,6 +654,24 @@ CREATE TABLE IF NOT EXISTS health.drugs (
   updated_at            TIMESTAMPTZ
 );
 
+-- hgp_implants (LSJH-211 — [CFR D05] per-animal HGP implant register).
+-- CFR has no per-animal implant record (only Drugs.HGP='Y' + a scanned form);
+-- this is the LSJ-HUB-native register: which beast got which HGP, when, where.
+CREATE TABLE IF NOT EXISTS health.hgp_implants (
+  id            SERIAL PRIMARY KEY,
+  cow_id        INTEGER NOT NULL REFERENCES cattle.cows(id) ON DELETE CASCADE,
+  drug_id       INTEGER NOT NULL REFERENCES health.drugs(id),
+  implant_date  DATE NOT NULL,
+  batch_number  TEXT,
+  implant_site  TEXT,
+  operator      TEXT,
+  notes         TEXT,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_hgp_implants_cow ON health.hgp_implants(cow_id);
+CREATE INDEX IF NOT EXISTS idx_hgp_implants_date ON health.hgp_implants(implant_date DESC);
+
 -- treatment_regimes (OG + V2 merged)
 CREATE TABLE IF NOT EXISTS health.treatment_regimes (
   id          SERIAL PRIMARY KEY,
@@ -2242,6 +2260,18 @@ CREATE TABLE IF NOT EXISTS carcase.carcase_grades_us (
   max_marbling NUMERIC(5,2),
   created_at  TIMESTAMPTZ DEFAULT NOW(),
   updated_at  TIMESTAMPTZ
+);
+
+-- marbling_bonus (LSJH-216: [CFR D06] Marbling bonus lookup — $/kg bonus per
+-- marbling score). Standard reference lookup parallel to carcase_grades.
+CREATE TABLE IF NOT EXISTS carcase.marbling_bonus (
+  id             SERIAL PRIMARY KEY,
+  marbling_score TEXT NOT NULL UNIQUE,
+  description    TEXT,
+  bonus_per_kg   NUMERIC(12,4),
+  active         BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ
 );
 
 -- carcase_prices (V2: 17 clients — pricing grids)
