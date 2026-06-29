@@ -1309,6 +1309,7 @@ CREATE TABLE IF NOT EXISTS feed.bunk_code_desc (
   code        SMALLINT NOT NULL,
   description TEXT,
   ration_type SMALLINT REFERENCES feed.ration_types(ration_type_id),
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
   created_at  TIMESTAMPTZ DEFAULT NOW(),
   updated_at  TIMESTAMPTZ
 );
@@ -4307,6 +4308,7 @@ ALTER TABLE digistar.digistar_users ADD COLUMN IF NOT EXISTS user_id SMALLINT NU
 ALTER TABLE digistar.digistar_users ADD COLUMN IF NOT EXISTS username VARCHAR(30) NULL;
 ALTER TABLE feed.bunk_code_desc ADD COLUMN IF NOT EXISTS bunk_code SMALLINT NULL;
 ALTER TABLE feed.bunk_code_desc ADD COLUMN IF NOT EXISTS kgs_head_adj REAL NULL;
+ALTER TABLE feed.bunk_code_desc ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE feed.bunk_readings ADD COLUMN IF NOT EXISTS avg_kgs_fed_today REAL NULL;
 ALTER TABLE feed.bunk_readings ADD COLUMN IF NOT EXISTS bk_id INTEGER;
 ALTER TABLE feed.bunk_readings ADD COLUMN IF NOT EXISTS bunk_reading VARCHAR(2) NULL;
