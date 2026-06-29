@@ -157,6 +157,35 @@ CREATE TABLE IF NOT EXISTS cattle.location_types (
   description TEXT
 );
 
+-- Lookup: sire_lines (LSJH-253: CFR Sire_Lines, Rangers Valley parity)
+CREATE TABLE IF NOT EXISTS cattle.sire_lines (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ
+);
+
+-- Lookup: breeding_categories (LSJH-255: CFR Breeding_Categories, RV parity)
+CREATE TABLE IF NOT EXISTS cattle.breeding_categories (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ
+);
+
+-- Lookup: scheduled_dof (LSJH-258: CFR RV_Scheduled_DOF, RV parity) — DOF
+-- (days-on-feed) milestone values, each with an optional human-readable label.
+CREATE TABLE IF NOT EXISTS cattle.scheduled_dof (
+  id          SERIAL PRIMARY KEY,
+  dof_days    INTEGER NOT NULL UNIQUE,
+  label       TEXT,
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ
+);
+
 -- ── Core: cows (OG ~70 cols + V2 ~88 cols → ~95 cols merged) ──
 
 CREATE TABLE IF NOT EXISTS cattle.cows (
@@ -2495,6 +2524,36 @@ CREATE TABLE IF NOT EXISTS commodity.period_stocks_closing_balance (
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ
 );
+
+-- reason_codes (LSJH-283: CFR Reason_List — commodity-transaction adjustment reasons)
+-- Mirrors main repo server/db/schema-farm-v5.sql. ETL: dbo.Reason_List → commodity.reason_codes.
+CREATE TABLE IF NOT EXISTS commodity.reason_codes (
+  id                 SERIAL PRIMARY KEY,
+  reason_id          SMALLINT NOT NULL UNIQUE,
+  reason_description TEXT,
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ
+);
+
+-- transaction_types (LSJH-280: CFR Transaction_Types — commodtrans.trans_type lookup).
+-- NOTE this is the COMMODITY lookup, distinct from system.transaction_types.
+-- ETL: dbo.Transaction_Types → commodity.transaction_types. Seeds 1-4 are proven from
+-- CFR source; verify trans_type=2 (Adjustment) against a live CFR DB.
+CREATE TABLE IF NOT EXISTS commodity.transaction_types (
+  id               SERIAL PRIMARY KEY,
+  trans_type_id    SMALLINT NOT NULL UNIQUE,
+  trans_type_short VARCHAR(1),
+  trans_type_long  TEXT,
+  trans_effect     VARCHAR(1),
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ
+);
+INSERT INTO commodity.transaction_types (trans_type_id, trans_type_short, trans_type_long, trans_effect)
+VALUES (1, 'P', 'Purchase / Receipt', '+'),
+       (2, '',  'Adjustment',         '+'),
+       (3, 'S', 'Sale',               '-'),
+       (4, '',  'Feed-out',           '-')
+ON CONFLICT (trans_type_id) DO NOTHING;
 
 
 -- ████████████████████████████████████████████████████████████████
