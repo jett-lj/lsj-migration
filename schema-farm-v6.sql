@@ -1703,6 +1703,7 @@ CREATE TABLE IF NOT EXISTS pen.pens (
   current_ration_code           SMALLINT,          -- V2 legacy ration code
   ration_code_pm                SMALLINT,          -- V2 PM ration
   kgs_head                      NUMERIC(10,2),
+  kgs_head_pm                   NUMERIC(10,2),  -- LSJH-472: PM kgs/head (CFR Pens_File Kgs_Head_PM)
   feeding_system                SMALLINT,
   inc_in_plateau_feed           BOOLEAN DEFAULT FALSE,
   exclude_from_feed_generation  BOOLEAN DEFAULT FALSE,
