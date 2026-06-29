@@ -2734,6 +2734,24 @@ CREATE TABLE IF NOT EXISTS transport.manure_carting (
   updated_at       TIMESTAMPTZ
 );
 
+-- trucking_dates (LSJH-221: CFR D07 frmTruckingDates — planned trucking / kill
+-- planner). A focused schedule of planned dispatch/kill dates.
+CREATE TABLE IF NOT EXISTS transport.trucking_dates (
+  id              SERIAL PRIMARY KEY,
+  planned_date    DATE NOT NULL,
+  destination     TEXT,
+  contact         TEXT,
+  lot_ref         TEXT,
+  pen_ref         TEXT,
+  head            INTEGER,
+  status          TEXT NOT NULL DEFAULT 'planned',
+  notes           TEXT,
+  active          BOOLEAN DEFAULT TRUE,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_trucking_dates_date ON transport.trucking_dates(planned_date);
+
 -- loaddockages (V2: 3 clients — load dockage records)
 CREATE TABLE IF NOT EXISTS transport.loaddockages (
   id              SERIAL PRIMARY KEY,
