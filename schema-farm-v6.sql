@@ -3361,6 +3361,37 @@ CREATE TABLE IF NOT EXISTS operations.drafting_settings (
   updated_at      TIMESTAMPTZ
 );
 
+-- instruments + instrument_calibration_logs (LSJH-451, CFR D11 —
+-- normalised instrument register + per-test calibration log).
+CREATE TABLE IF NOT EXISTS operations.instruments (
+  id              SERIAL PRIMARY KEY,
+  name            TEXT NOT NULL,
+  instrument_type TEXT,
+  serial_no       TEXT,
+  location        TEXT,
+  active          BOOLEAN NOT NULL DEFAULT TRUE,
+  notes           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS operations.instrument_calibration_logs (
+  id               SERIAL PRIMARY KEY,
+  instrument_id    INTEGER NOT NULL
+                     REFERENCES operations.instruments(id) ON DELETE CASCADE,
+  calibration_date DATE NOT NULL,
+  result_value     TEXT,
+  technician       TEXT,
+  passed           BOOLEAN,
+  next_due         DATE,
+  notes            TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_instr_cal_logs_instrument
+  ON operations.instrument_calibration_logs(instrument_id);
+CREATE INDEX IF NOT EXISTS idx_instr_cal_logs_next_due
+  ON operations.instrument_calibration_logs(next_due);
+
 -- report_templates (Reports + Dockets designer)
 -- Stores both Stimulsoft (template_json) and HTML (template_html/template_css) templates.
 -- See server/services/reports/report-templates.js for usage.
