@@ -164,7 +164,7 @@ For a truly clean slate (use when iterating on `mappings.js` and you want zero s
 # Drops + recreates the target DB. CAUTION: irreversible.
 psql -U $DB_USER -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE)"
 psql -U $DB_USER -d postgres -c "CREATE DATABASE $DB_NAME"
-psql -U $DB_USER -d $DB_NAME -f schema-farm-v5.sql
+psql -U $DB_USER -d $DB_NAME -f schema-farm-v6.sql
 
 # Then re-run the migration
 node migrate.js

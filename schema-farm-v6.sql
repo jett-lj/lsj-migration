@@ -2526,7 +2526,7 @@ CREATE TABLE IF NOT EXISTS commodity.period_stocks_closing_balance (
 );
 
 -- reason_codes (LSJH-283: CFR Reason_List — commodity-transaction adjustment reasons)
--- Mirrors main repo server/db/schema-farm-v5.sql. ETL: dbo.Reason_List → commodity.reason_codes.
+-- Mirrors main repo server/db/schema-farm-v6.sql. ETL: dbo.Reason_List → commodity.reason_codes.
 CREATE TABLE IF NOT EXISTS commodity.reason_codes (
   id                 SERIAL PRIMARY KEY,
   reason_id          SMALLINT NOT NULL UNIQUE,

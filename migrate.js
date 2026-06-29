@@ -80,7 +80,7 @@ const FK_DO_BLOCK = /DO \$\$\s*DECLARE\s+_fk\b[\s\S]*?\$\$;/g;
 const FK_INLINE   = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
 
 async function ensureSchema(pgPool) {
-  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v6.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
   // Strip FK constraint blocks — they are restored after data load by restoreForeignKeys()
   const schemaWithoutFks = schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, '');
@@ -98,7 +98,7 @@ async function ensureSchema(pgPool) {
  */
 async function fixColumnTypes(pgPool) {
   // Parse expected TEXT/VARCHAR columns from CREATE TABLE blocks in schema
-  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v6.sql');
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
   // Extract columns defined as TEXT or VARCHAR in CREATE TABLE statements
@@ -191,7 +191,7 @@ async function dropAllForeignKeys(pgPool) {
 }
 
 async function restoreForeignKeys(pgPool) {
-  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v6.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
 
   // Extract ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY blocks (inline + from DO blocks)

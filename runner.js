@@ -1286,7 +1286,7 @@ async function validateMappings(pgPool, opts = {}) {
   if (errors.length) {
     for (const e of errors) log.error(`[mapping-check] ${e}`);
     if (throwOnError) {
-      throw new Error(`Pre-flight mapping validation failed: ${errors.length} column(s) not found on target tables. Fix mappings.js or schema-farm-v5.sql before running migration.`);
+      throw new Error(`Pre-flight mapping validation failed: ${errors.length} column(s) not found on target tables. Fix mappings.js or schema-farm-v6.sql before running migration.`);
     }
   } else {
     log.info(`[mapping-check] OK — all ${mappings.length} mappings reference valid target columns.`);

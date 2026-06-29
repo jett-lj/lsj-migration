@@ -112,7 +112,7 @@ function poolAlias(name) {
 }
 
 async function ensureSchema(pgPool) {
-  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v6.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
   // Strip FK DO-block — constraints are restored after data load by restoreForeignKeys()
   const schemaWithoutFks = schema.replace(FK_DO_BLOCK_RE, '-- [FK block deferred to post-load]');
@@ -140,7 +140,7 @@ async function dropAllForeignKeys(pgPool) {
  * across farms (e.g. Barmount vs Rangers Valley).
  *
  * Strategy:
- *   1. Extract every FK ALTER from the FK DO-block in schema-farm-v5.sql
+ *   1. Extract every FK ALTER from the FK DO-block in schema-farm-v6.sql
  *   2. Add each constraint with NOT VALID (skips existing-data check)
  *   3. For each constraint that exists, NULL-out orphan child column
  *      values (sentinel 0s, stale IDs from absent companion DBs, etc.)
@@ -149,7 +149,7 @@ async function dropAllForeignKeys(pgPool) {
  * Returns { added, validated, total, failures }.
  */
 async function restoreForeignKeys(pgPool) {
-  const schemaPath = path.join(__dirname, 'schema-farm-v5.sql');
+  const schemaPath = path.join(__dirname, 'schema-farm-v6.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
 
   // Parse FK ALTER statements out of the DO-block(s)

@@ -31,7 +31,7 @@ const {
 // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Test helpers 
 
 const TEST_DB = 'lsj_column_coverage_test';
-const V3_SCHEMA = path.join(__dirname, '..', 'schema-farm-v5.sql');
+const V3_SCHEMA = path.join(__dirname, '..', 'schema-farm-v6.sql');
 
 function adminPool() {
   return new Pool({
