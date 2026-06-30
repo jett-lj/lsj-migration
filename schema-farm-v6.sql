@@ -1432,6 +1432,106 @@ CREATE TABLE IF NOT EXISTS feed.feeding_regimens (
   updated_at    TIMESTAMPTZ
 );
 
+-- ── Wave-6 mirror (LSJH-491/456/465) — virtual rations, named titration regimes,
+-- plateau/step-up feeding regimes. Mirrored from canonical server/db/schema-farm-v6.sql.
+-- (feed.rations.is_liquid_pot + pen.pens.titration_regime_id columns are added in the
+--  ALTER-column section below; pens FK in the tail constraint DO-block.)
+
+-- LSJH-491 (CFR D17) — liquid-pot virtual rations. A virtual ration coded F~nnn is
+-- NOT fed as a single line: at feed-out / Digistar send it EXPLODES into its liquid
+-- component commodities at fixed ratios. feed.rations.is_liquid_pot flags such a ration.
+CREATE TABLE IF NOT EXISTS feed.virtual_ration_components (
+  id                       SERIAL PRIMARY KEY,
+  virtual_ration_code      SMALLINT NOT NULL REFERENCES feed.rations(ration_code) ON DELETE CASCADE,
+  component_commodity_code SMALLINT NOT NULL,
+  component_commodity_name TEXT,
+  ratio_pcnt               NUMERIC(7,4) NOT NULL CHECK (ratio_pcnt > 0 AND ratio_pcnt <= 100),
+  loading_seq              SMALLINT,
+  created_at               TIMESTAMPTZ DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ,
+  UNIQUE (virtual_ration_code, component_commodity_code)
+);
+CREATE INDEX IF NOT EXISTS idx_virtual_ration_components_code
+  ON feed.virtual_ration_components (virtual_ration_code);
+COMMENT ON TABLE feed.virtual_ration_components IS
+  'LSJH-491 (CFR D17): maps a liquid-pot virtual ration (feed.rations.is_liquid_pot=TRUE) to its component commodities + ratios, used to EXPLODE an F~nnn line into its liquid components at feed-out / Digistar export. PG is authoritative.';
+
+-- LSJH-456 — reusable named titration templates (header + ordered day-bands), distinct
+-- from the per-pen feed.titration_ration_regimes scheme. Assigned to a pen via
+-- pen.pens.titration_regime_id.
+CREATE TABLE IF NOT EXISTS feed.titration_regimes (
+  id                  SERIAL PRIMARY KEY,
+  name                TEXT NOT NULL UNIQUE,
+  notes               TEXT,
+  active              BOOLEAN NOT NULL DEFAULT TRUE,
+  adg_target_default  NUMERIC(6,3),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by          TEXT,
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE feed.titration_regimes IS
+  'Reusable named titration templates (LSJH-456). Header for ordered feed.titration_regime_bands.';
+
+CREATE TABLE IF NOT EXISTS feed.titration_regime_bands (
+  id                  SERIAL PRIMARY KEY,
+  regime_id           INTEGER NOT NULL REFERENCES feed.titration_regimes(id) ON DELETE CASCADE,
+  band_seq            SMALLINT NOT NULL,
+  day_from            SMALLINT NOT NULL,
+  day_to              SMALLINT NOT NULL,
+  ration1_code        SMALLINT,
+  ration2_code        SMALLINT,
+  ration3_code        SMALLINT,
+  ration4_code        SMALLINT,
+  ration1_pcnt        NUMERIC(5,2),
+  ration2_pcnt        NUMERIC(5,2),
+  ration3_pcnt        NUMERIC(5,2),
+  ration4_pcnt        NUMERIC(5,2),
+  adg_target          NUMERIC(6,3),
+  adg_pushback_days   SMALLINT,
+  notes               TEXT,
+  CONSTRAINT titration_regime_bands_uq UNIQUE (regime_id, band_seq),
+  CONSTRAINT titration_regime_bands_dayorder CHECK (day_to >= day_from)
+);
+CREATE INDEX IF NOT EXISTS idx_titration_regime_bands_regime
+  ON feed.titration_regime_bands (regime_id, band_seq);
+COMMENT ON TABLE feed.titration_regime_bands IS
+  'Ordered day-bands for a named titration regime (LSJH-456): up to 4 rations (%s sum to 100) + ADG pushback per band.';
+
+-- ── Plateau / step-up feeding regimes (LSJH-465, CFR D15) — AUTHORING surface for the
+-- consumption-band feeding regimens that the plateau feed-adjust math reads. CFR's 5
+-- cohort family table-pairs collapse into two PG tables discriminated by feed_type (1..5).
+CREATE TABLE IF NOT EXISTS feed.plateau_regimes (
+  id                     SERIAL PRIMARY KEY,
+  feed_type              SMALLINT NOT NULL,
+  ration_type            SMALLINT NOT NULL,
+  consump_per_head_from  NUMERIC(10,2) NOT NULL,
+  consump_per_head_to    NUMERIC(10,2) NOT NULL,
+  accum_bunkcode_days    SMALLINT NOT NULL,
+  active                 BOOLEAN NOT NULL DEFAULT TRUE,
+  remarks                TEXT,
+  created_at             TIMESTAMPTZ DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ,
+  CONSTRAINT plateau_regimes_feed_type_chk CHECK (feed_type BETWEEN 1 AND 5),
+  CONSTRAINT plateau_regimes_band_chk CHECK (consump_per_head_to >= consump_per_head_from),
+  CONSTRAINT plateau_regimes_days_chk CHECK (accum_bunkcode_days > 0),
+  CONSTRAINT plateau_regimes_band_uq
+    UNIQUE (feed_type, ration_type, consump_per_head_from, consump_per_head_to)
+);
+
+CREATE TABLE IF NOT EXISTS feed.plateau_regime_steps (
+  id                  SERIAL PRIMARY KEY,
+  plateau_regime_id   INTEGER NOT NULL
+                        REFERENCES feed.plateau_regimes(id) ON DELETE CASCADE,
+  bunk_codes_total    SMALLINT NOT NULL,
+  kgs_head_adj        NUMERIC(10,2) NOT NULL,
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ,
+  CONSTRAINT plateau_regime_steps_total_uq
+    UNIQUE (plateau_regime_id, bunk_codes_total)
+);
+CREATE INDEX IF NOT EXISTS idx_plateau_regime_steps_regime
+  ON feed.plateau_regime_steps(plateau_regime_id);
+
 -- feeding_time_data (V2: 17 clients — feeding time records)
 CREATE TABLE IF NOT EXISTS feed.feeding_time_data (
   id                    SERIAL PRIMARY KEY,
@@ -4679,6 +4779,9 @@ ALTER TABLE feed.vendor_declarations ADD COLUMN IF NOT EXISTS owned_lt_2months B
 ALTER TABLE feed.vendor_declarations ADD COLUMN IF NOT EXISTS qa_program_details VARCHAR(50) NULL;
 ALTER TABLE feed.vendor_declarations ADD COLUMN IF NOT EXISTS withholding_for_drugs BOOLEAN NULL;
 ALTER TABLE feed.vendor_declarations ADD COLUMN IF NOT EXISTS withholding_for_feed BOOLEAN NULL;
+-- Wave-6 mirror (LSJH-491/456): liquid-pot virtual-ration flag + named-titration-regime assignment.
+ALTER TABLE feed.rations ADD COLUMN IF NOT EXISTS is_liquid_pot BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE pen.pens ADD COLUMN IF NOT EXISTS titration_regime_id INTEGER;
 ALTER TABLE finance.beast_accumed_feed_by_commodity ADD COLUMN IF NOT EXISTS accumed_cost NUMERIC(12,4);
 ALTER TABLE finance.beast_accumed_feed_by_commodity ADD COLUMN IF NOT EXISTS accumed_custfeed_charge NUMERIC(12,4);
 ALTER TABLE finance.beast_accumed_feed_by_commodity ADD COLUMN IF NOT EXISTS accumed_kgs REAL;
@@ -5201,6 +5304,7 @@ DECLARE
     _fks TEXT[][] := ARRAY[
         -- cattle → pen, purchasing, contacts
         ARRAY['fk_map_paddocks_pen',      'ALTER TABLE map.paddocks ADD CONSTRAINT fk_map_paddocks_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_pens_titration_regime', 'ALTER TABLE pen.pens ADD CONSTRAINT fk_pens_titration_regime FOREIGN KEY (titration_regime_id) REFERENCES feed.titration_regimes(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_pen',              'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_purchase_lot',     'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_purchase_lot FOREIGN KEY (purchase_lot_id) REFERENCES purchasing.purchase_lots(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_program_id',       'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_program_id FOREIGN KEY (program_id) REFERENCES cattle.cattle_program_types(id) ON DELETE SET NULL'],
