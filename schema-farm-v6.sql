@@ -948,6 +948,10 @@ CREATE TABLE IF NOT EXISTS health.drug_hgp_forms (
   id                    SERIAL PRIMARY KEY,
   drug_receival_id      INTEGER,
   hgp_decl_form_filename TEXT,
+  stored_path           TEXT,
+  stored_filename       TEXT,
+  content_type          TEXT,
+  file_size             INTEGER,
   created_at            TIMESTAMPTZ DEFAULT NOW(),
   updated_at            TIMESTAMPTZ
 );
