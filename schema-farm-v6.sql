@@ -2139,9 +2139,19 @@ CREATE TABLE IF NOT EXISTS finance.tandr_buying_details (
   weight_bought    NUMERIC(10,2),
   purchase_date    DATE,
   notes            TEXT,
+  -- LSJH-429 — buying-detail columns (cmdTanR_UpdateBuyingDetails bulk-set)
+  animal_grade         VARCHAR(3),
+  sale_yard_pen        VARCHAR(5),
+  sale_yard_or_paddock TEXT,
+  payment_status       VARCHAR(9),
+  date_purchased       DATE,
+  date_paid            DATE,
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ
 );
+-- LSJH-429 — one buying-detail row per cow (backs the batch op's idempotent upsert)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tandr_buying_cow
+  ON finance.tandr_buying_details (cow_id) WHERE cow_id IS NOT NULL;
 
 -- beast_accumed_feed_by_commodity (V2: 17 clients)
 CREATE TABLE IF NOT EXISTS finance.beast_accumed_feed_by_commodity (
@@ -2895,7 +2905,7 @@ CREATE TABLE IF NOT EXISTS contacts.contacts (
   id              SERIAL PRIMARY KEY,          -- OG PK
   contact_id      INTEGER UNIQUE,              -- V2 PK (kept for ETL)
   -- OG web-app columns
-  type            TEXT CHECK(type IN ('vendor','agent','buyer','abattoir','carrier','other')),
+  type            TEXT CHECK(type IN ('vendor','agent','buyer','abattoir','carrier','agistor','customer-feeder','other')),
   company         TEXT,
   title           TEXT,
   first_name      TEXT,
@@ -2920,6 +2930,8 @@ CREATE TABLE IF NOT EXISTS contacts.contacts (
   tail_tag        TEXT,
   brand           TEXT,
   notes           TEXT,
+  -- LSJH-485 (CFR D6) — Abattoir_Establishment_Number for abattoir-type contacts
+  abattoir_establishment_number TEXT,
   -- V2 legacy columns
   name            TEXT,
   company_name    TEXT,
@@ -2943,6 +2955,8 @@ CREATE INDEX IF NOT EXISTS idx_contacts_account ON contacts.contacts(account_cod
 CREATE TABLE IF NOT EXISTS contacts.contacttypes (
   contact_type_id  SERIAL PRIMARY KEY,
   contact_type     TEXT NOT NULL,
+  -- LSJH-505 — maps a taxonomy row onto contacts.type (the LSJ string enum).
+  lsj_type         TEXT,
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ
 );
