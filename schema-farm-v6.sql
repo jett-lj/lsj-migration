@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS cattle.cows (
   esi_withhold_until     DATE,
   -- RFID & tags
   old_rfid               TEXT,
+  previous_eid           TEXT,   -- LSJH-447 (CFR D3) — EID before the last RFID swap
   paddock_tag            TEXT,
   nfas_decl_number       TEXT,
   eu_dec_no              TEXT,
@@ -688,6 +689,26 @@ CREATE TABLE IF NOT EXISTS health.treatment_regimes (
   created_at  TIMESTAMPTZ DEFAULT NOW(),
   updated_at  TIMESTAMPTZ
 );
+
+-- treatment_regime_steps (LSJH-461 — [CFR D11] per-disease day-numbered drug
+-- schedule). The ordered detail rows for a regime: "day 0 drug A, day 3 drug B".
+-- This is the schedule DEFINITION; LSJH-499 auto-fills these steps onto a sick
+-- beast (so it joins to health.drugs for dose/withhold). Header is
+-- health.treatment_regimes; one step per (regime, day, drug).
+CREATE TABLE IF NOT EXISTS health.treatment_regime_steps (
+  id          SERIAL PRIMARY KEY,
+  regime_id   INTEGER NOT NULL REFERENCES health.treatment_regimes(id) ON DELETE CASCADE,
+  day_number  INTEGER NOT NULL DEFAULT 0,
+  drug_id     INTEGER REFERENCES health.drugs(id),
+  dose        NUMERIC(10,2),
+  dose_unit   TEXT,
+  route       TEXT,
+  notes       TEXT,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_treatment_regime_steps_regime
+  ON health.treatment_regime_steps(regime_id, day_number);
 
 -- health_records (OG web-app — CRUD for vet records)
 CREATE TABLE IF NOT EXISTS health.health_records (
@@ -4290,6 +4311,8 @@ ALTER TABLE contacts.company ADD COLUMN IF NOT EXISTS digistar_datakey BOOLEAN N
 ALTER TABLE contacts.company ADD COLUMN IF NOT EXISTS digistar_datalink BOOLEAN NULL;
 ALTER TABLE contacts.company ADD COLUMN IF NOT EXISTS key VARCHAR(20) NULL;
 ALTER TABLE contacts.company ADD COLUMN IF NOT EXISTS last_ohead_application TIMESTAMPTZ NULL;
+-- LSJH-445 (CFR D13 frmRego) — lightweight logo reference (URL/text); BYTEA upload deferred
+ALTER TABLE contacts.company ADD COLUMN IF NOT EXISTS logo_url VARCHAR(500) NULL;
 ALTER TABLE contacts.company ADD COLUMN IF NOT EXISTS nsa_client BOOLEAN NULL;
 ALTER TABLE contacts.company ADD COLUMN IF NOT EXISTS nsa_cust_id VARCHAR(8) NULL;
 ALTER TABLE contacts.company ADD COLUMN IF NOT EXISTS nsa_email VARCHAR(50) NULL;
@@ -4513,6 +4536,15 @@ ALTER TABLE feed.ration_regimes ADD COLUMN IF NOT EXISTS am_ration_code SMALLINT
 ALTER TABLE feed.ration_regimes ADD COLUMN IF NOT EXISTS feed_date DATE NULL;
 ALTER TABLE feed.ration_regimes ADD COLUMN IF NOT EXISTS pm_ration VARCHAR(10) NULL;
 ALTER TABLE feed.ration_regimes ADD COLUMN IF NOT EXISTS pm_ration_code SMALLINT NULL;
+-- LSJH-441 (CFR D15) — per-pen AM/PM dated ration calendar uses one row per
+-- (pen_id, feed_date) with AM_/PM_ration columns. This partial unique index
+-- backs the calendar upsert (ON CONFLICT) without touching the legacy
+-- migration-shaped rows that have a NULL feed_date (date_started ranges).
+-- Created here (not at the CREATE TABLE) because feed_date is added by the
+-- ADD COLUMN above.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ration_regime_pen_feed_date
+  ON feed.ration_regimes (pen_id, feed_date)
+  WHERE feed_date IS NOT NULL;
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS group_name VARCHAR(15) NULL;
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS notes VARCHAR(50) NULL;
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS ration_type VARCHAR(15);
@@ -4670,6 +4702,15 @@ ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS withhold_days_1 SMALLINT NULL;
 ALTER TABLE health.drugs ADD COLUMN IF NOT EXISTS withhold_days_esi SMALLINT NULL;
 -- health.drugs_given.beast_id is defined inline in CREATE TABLE
 ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS last_modified_timestamp TIMESTAMPTZ NULL;
+-- LSJH-499 — [CFR D5] auto-filled treatment-regime schedule rows. A scheduled
+-- ("to-be-given") dose carries a due_date and the originating regime/step so it
+-- can be reconciled when actually administered. `status` distinguishes the
+-- scheduled placeholder ('to-be-given') from a recorded administration ('given',
+-- the default for every legacy/manual row).
+ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'given';
+ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS due_date DATE NULL;
+ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS regime_id INTEGER NULL;
+ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS regime_step_id INTEGER NULL;
 ALTER TABLE health.drugs_purchased ADD COLUMN IF NOT EXISTS drugid SMALLINT NULL;
 ALTER TABLE health.mort_morb_triggers ADD COLUMN IF NOT EXISTS tablename VARCHAR(10);
 ALTER TABLE health.sick_beast_records ADD COLUMN IF NOT EXISTS last_modified_timestamp TIMESTAMPTZ NULL;
