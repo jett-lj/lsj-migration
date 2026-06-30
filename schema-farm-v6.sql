@@ -186,6 +186,20 @@ CREATE TABLE IF NOT EXISTS cattle.scheduled_dof (
   updated_at  TIMESTAMPTZ
 );
 
+-- Lookup: grower_groups (LSJH-205 — [CFR D04] frmGrowerGroups / Grower_Groups).
+-- CFR Grower_Groups carries (GrowerGroup_Code SMALLINT PK, GrowerGroup_Name
+-- VarWChar(25)); LSJ only had a free-text grower_group_code INTEGER on
+-- cattle.cows + purchasing.purchase_lots. This is the managed lookup behind that
+-- code. `code` is the operator-facing short code; `name` is the display name.
+CREATE TABLE IF NOT EXISTS cattle.grower_groups (
+  id          SERIAL PRIMARY KEY,
+  code        TEXT NOT NULL UNIQUE,
+  name        TEXT,
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ
+);
+
 -- ── Core: cows (OG ~70 cols + V2 ~88 cols → ~95 cols merged) ──
 
 CREATE TABLE IF NOT EXISTS cattle.cows (
