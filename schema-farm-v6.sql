@@ -1305,8 +1305,10 @@ CREATE TABLE IF NOT EXISTS feed.dual_ration_feeding (
   num_head          SMALLINT,
   ration1_code      SMALLINT,
   ration2_code      SMALLINT,
+  ration3_code      SMALLINT,
   ration1_pcnt      NUMERIC(5,2),
   ration2_pcnt      NUMERIC(5,2),
+  ration3_pcnt      NUMERIC(5,2),
   total_kgs_day     NUMERIC(10,2),
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   updated_at        TIMESTAMPTZ
@@ -1377,6 +1379,19 @@ CREATE TABLE IF NOT EXISTS feed.bunk_call_settings (
   show_window_30d          BOOLEAN,
   threshold_unit           TEXT,
   show_row_tabs            BOOLEAN,
+  -- LSJH-275 (CFR D14): per-customer configurable bunk-rating scale. CFR sites
+  -- run different contiguous ranges — the default AU 1..5 (1 slick … 5 off-feed)
+  -- or an RV/Roughage-Value style −1..3. Drives the score buttons + suggestion
+  -- engine on the client and the Bunk_Reading clamp on the CFR dual-write.
+  bunk_scale_min           SMALLINT NOT NULL DEFAULT 1,
+  bunk_scale_max           SMALLINT NOT NULL DEFAULT 5
+    CHECK (bunk_scale_max > bunk_scale_min),
+  -- LSJH-275 (CFR D14): structured per-customer behaviour-flag store. CFR's frmRego
+  -- carried ~40 per-site boolean toggles; the ones already modelled live in typed
+  -- columns (titration on feed_order_settings, plateau per-pen, etc). The rest are
+  -- kept here as a flat JSON object so a new per-customer toggle is a write, not a
+  -- migration. Validated key-by-key at the Zod boundary against a known allow-list.
+  behaviour_flags          JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at               TIMESTAMPTZ,
   updated_by               INTEGER
 );
@@ -4398,6 +4413,10 @@ ALTER TABLE feed.cattle_feed_updates ADD COLUMN IF NOT EXISTS ration_name TEXT;
 ALTER TABLE feed.cattle_feed_updates ADD COLUMN IF NOT EXISTS run_number INTEGER;
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS feed_date DATE NULL;
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS pen_number_id SMALLINT NULL;
+-- LSJH-448 (CFR D15) triple gradual-change blend: 3rd ration on the route-facing
+-- rationN_code/rationN_pcnt column set (matches ration1_/ration2_ naming).
+ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration3_code SMALLINT NULL;
+ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration3_pcnt NUMERIC(5,2) NULL;
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration_code_feed1 SMALLINT NULL;
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration_code_feed2 SMALLINT NULL;
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration_code_feed3 SMALLINT NULL;
