@@ -23,6 +23,15 @@ CREATE TABLE IF NOT EXISTS farms (
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- report_bundle (LSJH-511) — per-farm report allowlist
+-- Shape: NULL                              → ALL reports enabled (default — existing
+--                                            farms unchanged, nothing gated)
+--        { "enabled": ["close-out", ...] } → ONLY the listed report_keys are visible
+-- Enforced via server/lib/report-bundle.js (loaded onto req.farmReportBundle in
+-- middleware/farm.js). DEFAULT NULL so going live for a new tenant is "set the
+-- bundle", and every pre-existing farm keeps seeing every report.
+ALTER TABLE farms ADD COLUMN IF NOT EXISTS report_bundle JSONB DEFAULT NULL;
+
 CREATE TABLE IF NOT EXISTS farm_members (
   id        SERIAL PRIMARY KEY,
   farm_id   INTEGER NOT NULL REFERENCES farms(id) ON DELETE CASCADE,

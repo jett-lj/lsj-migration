@@ -2682,6 +2682,43 @@ CREATE TABLE IF NOT EXISTS transport.truck_load_variation_data (
   updated_at      TIMESTAMPTZ
 );
 
+-- transmitted_truck_loads (LSJH-473 — [CFR D16] Check Truck Data staging)
+-- Inbound "actual loaded" mixer rows pushed in by the Digistar import (or a
+-- manual stage POST), awaiting human reconciliation before they become a
+-- permanent feed-out. CFR holds the commodity/pen detail as packed fixed-width
+-- 8-char strings (Commod_Weights_Loaded / PenID_Fed_And_Wght); we keep both the
+-- raw packed strings (for re-unpack/audit) AND the unpacked JSONB arrays. The
+-- COMMIT path writes truck_loads / feed.penfeedsdata / commodity feed-out then
+-- DELETEs the staged row; a delete-staged path discards without committing.
+CREATE TABLE IF NOT EXISTS transport.transmitted_truck_loads (
+  id                     SERIAL PRIMARY KEY,
+  truck_name             VARCHAR(6),
+  load_date              DATE NOT NULL,
+  load_number_for_day    SMALLINT NOT NULL DEFAULT 1,
+  ration_code            SMALLINT,
+  target_weight          NUMERIC(10,2),
+  load_time              VARCHAR(5),
+  batch_number           SMALLINT,
+  source                 VARCHAR(20) NOT NULL DEFAULT 'manual', -- manual | datakey | datalink
+  -- raw packed fixed-width strings exactly as transmitted by the scale head
+  commod_weights_loaded  TEXT,
+  penid_fed_and_wght     TEXT,
+  -- unpacked detail (filled by the unpack step): [{commodity_code,kgs}] / [{pen_number_id,kgs}]
+  commodities            JSONB,
+  pens_fed               JSONB,
+  -- recipe-mismatch / tolerance flags computed at ingest (read by the check UI)
+  flags                  JSONB,
+  checked                BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at             TIMESTAMPTZ DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ
+);
+-- One staged row per truck/date/load# (idempotent re-stage upsert key; matches the
+-- CFR "duplicate values in the index" guard on Truck_Name/Load_Date/Load_Number).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_transmitted_truck_loads_natkey
+  ON transport.transmitted_truck_loads (truck_name, load_date, load_number_for_day);
+CREATE INDEX IF NOT EXISTS idx_transmitted_truck_loads_date
+  ON transport.transmitted_truck_loads (load_date);
+
 -- datakey_truck_allocation (V2: 2 clients)
 CREATE TABLE IF NOT EXISTS transport.datakey_truck_allocation (
   id              SERIAL PRIMARY KEY,
@@ -3576,6 +3613,37 @@ CREATE TABLE IF NOT EXISTS system.system_info (
   info_value TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ
+);
+
+-- import_column_mappings (LSJH-471 — [CFR D12] frmImport_DG1 column-mapping UI)
+-- Named, per-farm column→field maps so an arbitrary saleyard/scale CSV header set
+-- can be assigned to the import target fields without code changes. `mapping` is a
+-- { <csvHeaderKey>: <targetField> } object (csvHeaderKey is the normalised header
+-- — lower-case, spaces→underscore — matching the parser). UNIQUE on
+-- (import_type, name) so a saved map can be looked up + overwritten by name.
+CREATE TABLE IF NOT EXISTS system.import_column_mappings (
+  id          SERIAL PRIMARY KEY,
+  import_type TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  mapping     JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by  INTEGER,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ,
+  UNIQUE (import_type, name)
+);
+
+-- import_audit (LSJH-471 — [CFR D12] one Import_audit trail row per import run)
+CREATE TABLE IF NOT EXISTS system.import_audit (
+  id          SERIAL PRIMARY KEY,
+  import_type TEXT NOT NULL,
+  mapping_name TEXT,
+  rows_read   INTEGER NOT NULL DEFAULT 0,
+  rows_added  INTEGER NOT NULL DEFAULT 0,
+  rows_updated INTEGER NOT NULL DEFAULT 0,
+  rows_rejected INTEGER NOT NULL DEFAULT 0,
+  tables_written TEXT[],
+  created_by  INTEGER,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- database_flags (V2: 17 clients — feature toggles)
