@@ -867,16 +867,36 @@ describe('Per-table column integration', () => {
   });
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Treatment_Regimes Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-  it('Treatment_Regimes Ã¢â‚¬â€ all 7 columns round-trip', async () => {
-    const { rows } = await pgPool.query('SELECT * FROM health.treatment_regimes WHERE diseaseid = 50');
-    expect(rows).toHaveLength(1);
-    const r = rows[0];
-    expect(r.day_numb).toBe(0);
-    expect(r.drug_name).toBe('Excenel');
-    expect(r.dose).toBeCloseTo(5.0);
-    expect(r.dosebyweight).toBe(true);
-    expect(r.drug_id).toBe(77);
-    expect(r.userid).toBe(1);
+  it('Treatment_Regimes Ã¢â‚¬â€ converted to app-space regime + steps (LSJH-532)', async () => {
+    // convertTreatmentRegimes() (LSJH-532) folds the CFR mirror rows (one STEP
+    // per row, keyed by legacy DiseaseID) into ONE app-space header per disease
+    // plus treatment_regime_steps, then removes the converted mirror rows --
+    // the app's regime machinery (LSJH-209/499) only reads the app shape.
+    const { rows: mirror } = await pgPool.query(
+      'SELECT 1 FROM health.treatment_regimes WHERE diseaseid = 50',
+    );
+    expect(mirror).toHaveLength(0);
+
+    const { rows: headers } = await pgPool.query(`
+      SELECT tr.* FROM health.treatment_regimes tr
+      JOIN health.diseases d ON d.id = tr.disease_id
+      WHERE d.disease_id = 50`);
+    expect(headers).toHaveLength(1);
+    const h = headers[0];
+    expect(h.name).toBe('BRD');
+    expect(h.active).toBe(true);
+    expect(h.dose_by_weight).toBe(true);
+
+    const { rows: steps } = await pgPool.query(
+      'SELECT * FROM health.treatment_regime_steps WHERE regime_id = $1',
+      [h.id],
+    );
+    expect(steps).toHaveLength(1);
+    expect(steps[0].day_number).toBe(0); // CFR Day_Numb (1-based, 0 tolerated) -> day 0
+    expect(steps[0].dose).toBeCloseTo(5.0);
+    // step drug bridged to the serial drugs.id (fixture drug's legacy Drug_ID is 77)
+    const { rows: drug } = await pgPool.query('SELECT id FROM health.drugs WHERE drug_id = 77');
+    expect(steps[0].drug_id).toBe(drug[0].id);
   });
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Breeding_Sires Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬

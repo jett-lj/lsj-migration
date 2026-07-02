@@ -700,6 +700,7 @@ CREATE TABLE IF NOT EXISTS health.treatment_regimes (
   dose_by_weight BOOLEAN,
   drug_id     INTEGER REFERENCES health.drugs(id),
   userid      SMALLINT,
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
   created_at  TIMESTAMPTZ DEFAULT NOW(),
   updated_at  TIMESTAMPTZ
 );
@@ -4933,6 +4934,7 @@ ALTER TABLE health.drugs_purchased ADD COLUMN IF NOT EXISTS drugid SMALLINT NULL
 ALTER TABLE health.mort_morb_triggers ADD COLUMN IF NOT EXISTS tablename VARCHAR(10);
 ALTER TABLE health.sick_beast_records ADD COLUMN IF NOT EXISTS last_modified_timestamp TIMESTAMPTZ NULL;
 ALTER TABLE health.sick_beast_temperatures ADD COLUMN IF NOT EXISTS beastid INTEGER NULL;
+ALTER TABLE health.treatment_regimes ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE health.treatment_regimes ADD COLUMN IF NOT EXISTS day_numb SMALLINT NULL;
 ALTER TABLE health.treatment_regimes ADD COLUMN IF NOT EXISTS diseaseid SMALLINT NULL;
 ALTER TABLE health.treatment_regimes ADD COLUMN IF NOT EXISTS dosebyweight BOOLEAN NULL;

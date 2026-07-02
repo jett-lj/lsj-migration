@@ -538,6 +538,11 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
     await expandNormalizedChildren(feedPool, pgPool, log);
   }
 
+  // Build app-space treatment regimes from the CFR mirror rows (LSJH-532)
+  if (!dryRun) {
+    await convertTreatmentRegimes(pgPool, log);
+  }
+
   log.info('Migration complete.');
 
   // Reset SERIAL sequences for tables that received explicit IDs
@@ -1196,6 +1201,63 @@ async function expandNormalizedChildren(mssqlPool, pgPool, log) {
   } catch (err) {
     log.debug(`  Pen_Feeding_Order_Params not found or error: ${err.message}`);
   }
+}
+
+/**
+ * LSJH-532 — build app-space treatment regimes from the CFR mirror rows.
+ *
+ * CFR Treatment_Regimes has no regime header: each row is one STEP keyed by
+ * DiseaseID, and the table mapping mirrors those rows into the LEGACY columns
+ * of health.treatment_regimes (diseaseid/day_numb/drug_id/dose — app columns
+ * left NULL). LSJ-HUB's regime machinery (LSJH-209 sick-import auto-apply,
+ * LSJH-499 manual apply) reads header rows keyed by the SERIAL diseases.id
+ * plus health.treatment_regime_steps — without this conversion, regimes never
+ * fire on a migrated box.
+ *
+ * Per disease: ONE header (disease_id bridged legacy→serial, name from the
+ * disease, days = max Day_Numb, dose_by_weight = any step flagged) and one
+ * step per mirror row — CFR Day_Numb is 1-based, LSJ day_number is 0-based
+ * (GREATEST(…-1, 0) also tolerates 0-based source data); step drug_id is
+ * bridged to the serial drugs.id. Converted mirror rows are then removed so
+ * the app's regimes list shows only real headers; rows whose disease can't
+ * be bridged are left in place (no data loss). Safe on re-runs: targets are
+ * truncated per run, and header creation skips diseases that already have an
+ * app-space regime (multi-source SKIP_TRUNCATE loads).
+ */
+async function convertTreatmentRegimes(pgPool, log) {
+  const { rows: headers } = await pgPool.query(`
+    INSERT INTO health.treatment_regimes (name, disease_id, days, dose_by_weight, active)
+    SELECT TRIM(d.disease_name), d.id, MAX(tr.day_numb),
+           BOOL_OR(COALESCE(tr.dosebyweight, FALSE)), TRUE
+      FROM health.treatment_regimes tr
+      JOIN health.diseases d ON d.disease_id = tr.diseaseid
+     WHERE tr.diseaseid IS NOT NULL AND tr.disease_id IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM health.treatment_regimes h
+          WHERE h.disease_id = d.id AND h.diseaseid IS NULL)
+     GROUP BY d.id, d.disease_name
+    RETURNING id`);
+  if (headers.length === 0) return;
+
+  const { rowCount: steps } = await pgPool.query(`
+    INSERT INTO health.treatment_regime_steps (regime_id, day_number, drug_id, dose)
+    SELECT h.id, GREATEST(COALESCE(tr.day_numb, 1) - 1, 0), dr.id, tr.dose
+      FROM health.treatment_regimes tr
+      JOIN health.diseases d ON d.disease_id = tr.diseaseid
+      JOIN health.treatment_regimes h ON h.disease_id = d.id AND h.diseaseid IS NULL
+      LEFT JOIN health.drugs dr ON dr.drug_id = tr.drug_id
+     WHERE tr.diseaseid IS NOT NULL AND tr.disease_id IS NULL`);
+
+  const { rowCount: removed } = await pgPool.query(`
+    DELETE FROM health.treatment_regimes tr
+     USING health.diseases d
+     WHERE d.disease_id = tr.diseaseid
+       AND tr.diseaseid IS NOT NULL AND tr.disease_id IS NULL`);
+
+  log.info(
+    `  Converted CFR treatment regimes: ${headers.length} regime(s), ${steps} step(s) ` +
+    `(${removed} mirror rows folded in)`,
+  );
 }
 
 // ── Sequence reset ───────────────────────────────────
