@@ -5334,7 +5334,9 @@ DECLARE
         ARRAY['fk_sick_beast_disease',    'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_disease FOREIGN KEY (disease_id) REFERENCES health.diseases(disease_id) ON DELETE SET NULL'],
         ARRAY['fk_sick_beast_diagnoser',  'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_diagnoser FOREIGN KEY (diagnoser_empl_id) REFERENCES feed.feedlot_staff(user_id) ON DELETE SET NULL'],
         ARRAY['fk_sick_beast_custfeedowner','ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_custfeedowner FOREIGN KEY (customfeedownerid) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
-        ARRAY['fk_drugs_given_drug',      'ALTER TABLE health.drugs_given ADD CONSTRAINT fk_drugs_given_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(drug_id) ON DELETE SET NULL'],
+        -- drugs_given.drug_id is id-space in LSJ-HUB (LSJH-531): the runner remaps
+        -- CFR Drug_IDs to serial ids at load, so the FK targets drugs(id).
+        ARRAY['fk_drugs_given_drug',      'ALTER TABLE health.drugs_given ADD CONSTRAINT fk_drugs_given_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(id) ON DELETE SET NULL'],
         ARRAY['fk_drugs_given_sb',        'ALTER TABLE health.drugs_given ADD CONSTRAINT fk_drugs_given_sb FOREIGN KEY (sb_rec_no) REFERENCES health.sick_beast_records(sb_rec_no) ON DELETE SET NULL'],
         ARRAY['fk_autopsy_sb',            'ALTER TABLE health.autopsy_records ADD CONSTRAINT fk_autopsy_sb FOREIGN KEY (sb_rec_no) REFERENCES health.sick_beast_records(sb_rec_no) ON DELETE RESTRICT'],
         ARRAY['fk_autopsy_beast',         'ALTER TABLE health.autopsy_records ADD CONSTRAINT fk_autopsy_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],

@@ -385,8 +385,20 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
     if (tables.has('health.drugs')) {
       if (dryRun) {
         lookups.drugIdSet = await buildIdSetFromSource(mssqlPool, 'Drugs', 'Drug_ID');
+        // Dry-run: identity map (no PG rows to resolve serial ids from)
+        lookups.drugIdMap = await buildLookupFromSource(mssqlPool, 'Drugs', 'Drug_ID', 'Drug_ID');
       } else {
         lookups.drugIdSet = await buildIdSet(pgPool, 'health.drugs', 'drug_id');
+        // CFR Drug_ID → new serial health.drugs.id. health.drugs_given is
+        // id-space in LSJ-HUB (app writers insert drugs.id and every reader
+        // joins d.id = dg.drug_id — LSJH-531), unlike the other drug_id
+        // mirrors which deliberately stay legacy drug_id-space.
+        const drugRes = await pgPool.query(
+          'SELECT id, drug_id FROM health.drugs WHERE drug_id IS NOT NULL',
+        );
+        lookups.drugIdMap = {};
+        for (const row of drugRes.rows) lookups.drugIdMap[row.drug_id] = row.id;
+        log.info(`  Built drugIdMap: ${Object.keys(lookups.drugIdMap).length} entries`);
       }
     }
     if (tables.has('system.lookups')) {
@@ -807,6 +819,13 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
       if (row.drug_id && lookups.drugIdSet && !lookups.drugIdSet.has(row.drug_id)) {
         log.debug(`  FK nullified: ${targetTable}.drug_id=${row.drug_id} — no matching drugs row`);
         row.drug_id = null;
+      }
+      // health.drugs_given is id-space in LSJ-HUB (LSJH-531): remap the CFR
+      // Drug_ID to the new serial health.drugs.id. Other drug_id tables
+      // (drugs_purchased, drug_inventory_line_items) stay legacy-space — do
+      // NOT remap them.
+      if (targetTable === 'health.drugs_given' && row.drug_id != null && lookups.drugIdMap) {
+        row.drug_id = lookups.drugIdMap[row.drug_id] ?? null;
       }
       if (row.drugid && lookups.drugIdSet && !lookups.drugIdSet.has(row.drugid)) {
         log.debug(`  FK nullified: ${targetTable}.drugid=${row.drugid} — no matching drugs row`);

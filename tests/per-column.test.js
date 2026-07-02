@@ -771,7 +771,11 @@ describe('Per-table column integration', () => {
     const { rows } = await pgPool.query('SELECT * FROM health.drugs_given');
     expect(rows.length).toBeGreaterThanOrEqual(1);
     const r = rows[0];
-    expect(r.drug_id).toBe(77);
+    // LSJH-531 — drugs_given.drug_id is remapped at load from the CFR Drug_ID
+    // (77) to the new serial health.drugs.id: LSJ-HUB app writers/readers are
+    // id-space for this table. Other drug_id mirrors stay legacy-space.
+    const { rows: drugRows } = await pgPool.query('SELECT id FROM health.drugs WHERE drug_id = 77');
+    expect(r.drug_id).toBe(drugRows[0].id);
     expect(r.units_given).toBeCloseTo(5.25);
     expect(r.user_initials).toBe('JB');
     expect(r.ear_tag_no).toBe('CT001');
