@@ -145,14 +145,26 @@ pen occupancy, a few animal records.
 
 ---
 
-## Finance note (LSJH-768) — migrated ledgers are UNCODED, by design
+## Finance note (LSJH-768) — migrated ledgers are CODED
 
-Migrated `finance.costs` rows are written **uncoded** (`cost_code_id` NULL) with `revexp_code`
-preserved. The app's P&L readers (`reports/cost-expr.js`) classify them by the numeric
-`revexp_code`: 8/9 = live-sale revenue, **10 = carcase (dropped from the ledger; sourced from
-`carcase_data` so it is not double-counted)**, everything else = expense at magnitude (so CFR's
-negative expense sign reads correctly). This is why P&L comes out right without any sign
-gymnastics. Do NOT "fix" this by coding the rows — that re-introduces the errors LSJH-768 killed.
+Migrated `finance.costs` rows are written **coded** (`cost_code_id` resolved from `RevExp_Code`),
+and `mapCostType` sets `cost_codes.type` correctly (CFR `'+'` → `revenue`). The app's P&L readers
+were hardened for exactly this shape: `getIncomeStatementData` classifies every revenue code
+(sale 8/9, carcase 10, GST 11, backgrounding 12, …) by `cost_codes.type`, `expenseMagnitude` ABSs
+the (CFR-negative) expense totals, and `notLedgerCarcaseRevenueCode` drops the carcase ledger copy
+so carcase revenue is single-sourced from `carcase_data`. **Do NOT leave the rows uncoded** — that
+mis-books revenue codes 11/12/22 as expense and blanks the Cost Code Breakdown report.
+
+**Known app-side reader gaps for CFR-migrated (negative-signed) data — verify these during sign-off,
+they are LSJ-HUB follow-ups, not migration-tool bugs:**
+- `getLotPlSummary` (Lot P&L report) sums raw signed `costValue` with no magnitude/revenue split →
+  **Net P&L can be sign-flipped** on migrated farms. Cross-check lot P&L against the Close-Out /
+  Income Statement (which are hardened) before trusting it.
+- `getCostCodeBreakdown` and secondary reports display expense subtotals from raw signed totals →
+  expense lines may show **negative** for CFR-migrated farms (totals net out, but the sign reads odd).
+- Carcase de-dup relies on the carcase cost-code description matching `%carc%` (Barmount's
+  "Carc.value $/Kg" matches). A farm whose carcase code lacks "carc" in its description would
+  double-count carcase revenue — check the description for each customer.
 
 ## Safety notes
 

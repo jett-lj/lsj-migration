@@ -464,10 +464,21 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
       }
       log.info(`  Built breedIdMap: ${Object.keys(lookups.breedIdMap).length} entries`);
     }
-    // LSJH-768: finance.costs is migrated UNCODED (cost_code_id NULL); the app classifies
-    // migrated cost rows by revexp_code (reports/cost-expr.js uncodedExpense/uncodedRevenue),
-    // NOT by cost_code_id. We therefore deliberately do NOT build a revexp→cost_code_id map
-    // — coding the rows re-introduces the P&L errors LSJH-768 fixed. See the Costs mapping.
+    if (tables.has('finance.cost_codes')) {
+      // Map CFR RevExp_Code → serial finance.cost_codes.id so migrated finance.costs rows
+      // carry cost_code_id (the CODED shape the app's LSJH-768-hardened readers expect — see
+      // the Costs mapping in mappings.js). With mapCostType now correct, coded rows classify
+      // revenue vs expense by cost_codes.type; leaving them uncoded mis-books revenue codes
+      // 11/12/22 and blanks getCostCodeBreakdown, so we deliberately code them.
+      if (dryRun) {
+        lookups.revexpToCostCodeId = await buildLookupFromSource(mssqlPool, 'Cost_Codes', 'RevExp_Code', 'RevExp_Code');
+      } else {
+        const res = await pgPool.query('SELECT id, revexp_code FROM finance.cost_codes WHERE revexp_code IS NOT NULL');
+        lookups.revexpToCostCodeId = {};
+        for (const row of res.rows) lookups.revexpToCostCodeId[row.revexp_code] = row.id;
+      }
+      log.info(`  Built revexpToCostCodeId: ${Object.keys(lookups.revexpToCostCodeId).length} entries`);
+    }
     if (tables.has('pen.pens')) {
       if (dryRun) {
         lookups.penNameToIdMap = {};
@@ -1621,7 +1632,7 @@ async function validateMigration(mssqlPool, pgPool) {
     const res = await pgPool.query(`
       SELECT COUNT(*) AS cnt FROM (
         SELECT cow_id, revexp_code, ration FROM finance.costs
-        WHERE cow_id IS NOT NULL AND ration IS NOT NULL
+        WHERE cow_id IS NOT NULL AND ration IS NOT NULL AND revexp_code IS NOT NULL
         GROUP BY cow_id, revexp_code, ration HAVING COUNT(*) > 1
       ) d`);
     const dupAgg = parseInt(res.rows[0].cnt);

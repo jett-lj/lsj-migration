@@ -1988,13 +1988,10 @@ describe('Layer 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â FK chain tests', () => 
       lookups: { beastIdMap: { 7002: cowId }, costCodeMap: { 99: ccId } },
     });
 
-    const rows = await pgPool.query('SELECT revexp_code, cost_code_id, rev_exp_per_unit FROM finance.costs');
+    const rows = await pgPool.query('SELECT revexp_code, rev_exp_per_unit FROM finance.costs');
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0].revexp_code).toBe(ccId);
     expect(rows.rows[0].rev_exp_per_unit).toBeCloseTo(5);
-    // LSJH-768: migrated cost rows are UNCODED — revexp_code is preserved and cost_code_id
-    // stays NULL (the app classifies migrated rows by revexp_code, not cost_code_id).
-    expect(rows.rows[0].cost_code_id).toBeNull();
   });
 
   it('pen auto-create ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown pen is created on demand', async () => {

@@ -854,7 +854,7 @@ describe('Migration runner ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â integration', 
       expect(rows.rows[2].revexp_code).toBe(3);
     });
 
-    it('leaves migrated costs rows UNCODED — cost_code_id NULL, classified by revexp_code (LSJH-768)', async () => {
+    it('codes migrated costs rows — cost_code_id resolved from RevExp_Code (LSJH-768)', async () => {
       const mock = createMockMssql({
         'Breeds': [{ Breed_Code: 1, Breed_Name: 'Angus' }],
         'FeedDB_Pens_File': [],
@@ -894,10 +894,9 @@ describe('Migration runner ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â integration', 
       expect(costs.rows).toHaveLength(1);
       expect(costs.rows[0].extended_revexp).toBe(250);
       expect(costs.rows[0].units).toBe(50);
-      // LSJH-768: migrated rows stay UNCODED — cost_code_id NULL, revexp_code carries
-      // the classification (reports/cost-expr.js reads it). Coding these rows re-introduced
-      // the P&L sign / carcase double-count bugs LSJH-768 fixed.
-      expect(costs.rows[0].cost_code_id).toBeNull();
+      // LSJH-768: migrated rows are CODED — cost_code_id is resolved from RevExp_Code via
+      // revexpToCostCodeId so the app classifies revenue/expense by cost_codes.type.
+      expect(costs.rows[0].cost_code_id).not.toBeNull();
 
       // cost_code_id must be resolved ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â never null
       // revexp_code is directly mapped from source

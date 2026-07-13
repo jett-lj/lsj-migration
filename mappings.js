@@ -753,17 +753,22 @@ const mappings = [
       { source: 'Extended_RevExp',  target: 'extended_revexp',  transform: toNum },
       { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
-    // LSJH-768: migrated CFR cost rows are left UNCODED (cost_code_id NULL); the
-    // classification is carried by revexp_code. The app P&L readers (reports/cost-expr.js)
-    // are BUILT for this shape — uncodedExpense/uncodedRevenue classify by the robust
-    // numeric revexp_code: 8/9 = live-sale revenue (magnitude), 10 = carcase (dropped,
-    // single-sourced from carcase_data → no double-count, no reliance on a description
-    // ILIKE '%carc%'), everything else = expense at MAGNITUDE (so CFR's negative expense
-    // sign reads correctly with no sign normalization). A prior revision SET cost_code_id
-    // here, which moved rows onto the CODED path and re-introduced the exact P&L errors
-    // LSJH-768 fixed (fragile carcase drop; negative expenses in the secondary readers).
-    // fk_costs_code is on revexp_code (→ finance.cost_codes.revexp_code), so uncoded rows
-    // are fully valid; cost_code_id is nullable (fk_costs_cost_code ON DELETE SET NULL).
+    transformRow(rawRow, row, lookups) {
+      // LSJH-768: CODE migrated cost rows (set cost_code_id from RevExp_Code). The app's
+      // finance readers were HARDENED for the CODED CFR shape, and mapCostType is now correct
+      // (CFR '+' → cost_codes.type='revenue'), so getIncomeStatementData classifies EVERY
+      // revenue code (8/9 sale, 10 carcase, 11 GST, 12 backgrounding, 22 …) as revenue via
+      // cc.type, and notLedgerCarcaseRevenueCode drops the carcase ledger copy (carcase is
+      // single-sourced from carcase_data). Leaving rows UNCODED was tried and REVERTED: the
+      // uncoded classifier (reports/cost-expr.js) only treats revexp 8/9 as revenue — it
+      // mis-books codes 11/12/22 as EXPENSE — and getCostCodeBreakdown / income-statement
+      // itemisation INNER-JOIN cost_code_id, so they go blank/collapse for an uncoded farm.
+      // cost_code_id is nullable (fk_costs_cost_code is ON DELETE SET NULL), so an unmatched
+      // code stays NULL safely; revexp_code still satisfies fk_costs_code.
+      if (row.revexp_code != null && lookups.revexpToCostCodeId) {
+        row.cost_code_id = lookups.revexpToCostCodeId[row.revexp_code] ?? null;
+      }
+    },
     validate: (row) => row.total !== null,
   },
 

@@ -88,6 +88,16 @@ const FK_DO_BLOCK = /DO \$\$(?:(?!\$\$;)[\s\S])*?FOREIGN KEY(?:(?!\$\$;)[\s\S])*
 async function ensureSchema(pgPool) {
   const schemaPath = path.join(__dirname, 'schema-farm-v6.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
+  // Drift guard: the tempered FK-block regex keys on a block containing "FOREIGN KEY", so it
+  // should match exactly the schema's FK DO blocks (currently 3: the main _fk block + the
+  // LSJH-530/531/404 repoint waves). If schema-farm-v6.sql is re-synced from canonical and this
+  // count changes, the strip may be dropping a NON-FK block (e.g. a trigger/index deploy that
+  // merely mentions FOREIGN KEY) or missing a new FK block — verify FK strip/restore before
+  // trusting the run. Non-fatal (a legitimate new FK wave is allowed), but loud.
+  const fkBlockCount = (schema.match(FK_DO_BLOCK) || []).length;
+  if (fkBlockCount !== 3) {
+    console.warn(`[WARN] FK-block strip matched ${fkBlockCount} DO block(s) (expected 3). schema-farm-v6.sql may have drifted — verify ensureSchema/restoreForeignKeys FK handling.`);
+  }
   // Strip FK constraint blocks — they are restored after data load by restoreForeignKeys()
   const schemaWithoutFks = schema.replace(FK_DO_BLOCK, '');
   await pgPool.query(schemaWithoutFks);
@@ -451,7 +461,21 @@ async function main() {
     try {
       const r = await pgPool.query('SELECT COUNT(*)::int AS n FROM cattle.cows');
       existing = r.rows[0].n;
-    } catch (_) { /* cattle.cows not present yet — treat as fresh/empty */ }
+    } catch (e) {
+      // Fail CLOSED. cattle.cows always exists here (ensureSchema created it), so the ONLY
+      // benign case is 42P01 (table genuinely absent → fresh DB). ANY other error (connection
+      // blip, statement/lock timeout, permission) is NOT proof of emptiness — refuse to run a
+      // destructive TRUNCATE on an unverified target rather than assume it is empty.
+      if (e.code !== '42P01') {
+        console.error(
+          `\n[ABORT] Could not verify target "${db}" is empty (${e.message}).\n` +
+          `        Refusing a destructive migration on an unverified target. Resolve the error,\n` +
+          `        or pass --force to override.\n`
+        );
+        await closePools();
+        process.exit(2);
+      }
+    }
     if (existing > 0) {
       console.error(
         `\n[ABORT] Target database "${db}" already contains ${existing.toLocaleString()} cattle.cows row(s).\n` +
