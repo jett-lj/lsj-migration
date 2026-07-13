@@ -125,10 +125,14 @@ function mapWeighType(v) {
   return 'interim';
 }
 
-/** Map legacy Rev_Exp code to revenue/expense */
+/** Map legacy Rev_Exp code to revenue/expense.
+ * CFR stores Rev_Exp as a sign: '+' = revenue, '-' = expense
+ * (frmImport_DG1.vb applies +1/-1; frmStockRec sums income WHERE Rev_Exp='+').
+ * 'R' is tolerated for any legacy variant. Anything else is an expense. */
 function mapCostType(v) {
   if (!v) return 'expense';
-  return String(v).toUpperCase() === 'R' ? 'revenue' : 'expense';
+  const s = String(v).trim().toUpperCase();
+  return (s === '+' || s === 'R') ? 'revenue' : 'expense';
 }
 
 /** Junk breed names that should be excluded from migration */
@@ -614,9 +618,13 @@ const mappings = [
       { source: 'Pen_Number',           target: 'pen_number',              transform: trimOrNull },
     ],
     transformRow(rawRow, row, lookups) {
-      // NOTE: cow status is intentionally NOT derived here — it uses the schema
-      // DEFAULT ('active'). The raw Died flag is migrated as the `died` column,
-      // and downstream logic derives lifecycle state from the raw fields.
+      // Derive lifecycle status from the legacy flags (Died / Sale_Date /
+      // Date_Archived) into the canonical enum ('active','sold','died','archived').
+      // WITHOUT this, every historical animal loads status='active', which both
+      // over-counts live head for per-head billing and defeats the boot-time
+      // uq_cows_ear_tag_active partial index (LSJH-346) by making reused tags
+      // collide as active duplicates. The `died` column still mirrors the raw flag.
+      row.status = deriveCowStatus(rawRow);
 
       // Resolve pen_id from Pen_Number → pen.pens.name (case-insensitive)
       const penName = trimOrNull(rawRow.Pen_Number);
@@ -745,6 +753,17 @@ const mappings = [
       { source: 'Extended_RevExp',  target: 'extended_revexp',  transform: toNum },
       { source: 'Last_Modified_timestamp', target: 'last_modified_timestamp', transform: toDate },
     ],
+    // LSJH-768: migrated CFR cost rows are left UNCODED (cost_code_id NULL); the
+    // classification is carried by revexp_code. The app P&L readers (reports/cost-expr.js)
+    // are BUILT for this shape — uncodedExpense/uncodedRevenue classify by the robust
+    // numeric revexp_code: 8/9 = live-sale revenue (magnitude), 10 = carcase (dropped,
+    // single-sourced from carcase_data → no double-count, no reliance on a description
+    // ILIKE '%carc%'), everything else = expense at MAGNITUDE (so CFR's negative expense
+    // sign reads correctly with no sign normalization). A prior revision SET cost_code_id
+    // here, which moved rows onto the CODED path and re-introduced the exact P&L errors
+    // LSJH-768 fixed (fragile carcase drop; negative expenses in the secondary readers).
+    // fk_costs_code is on revexp_code (→ finance.cost_codes.revexp_code), so uncoded rows
+    // are fully valid; cost_code_id is nullable (fk_costs_cost_code ON DELETE SET NULL).
     validate: (row) => row.total !== null,
   },
 
@@ -1749,6 +1768,14 @@ const mappings = [
       { source: 'Invoice_Amount', target: 'invoice_amount', transform: toNum },
       { source: 'Invoice_Paid', target: 'invoice_paid', transform: toBool },
     ],
+    transformRow(rawRow, row, lookups) {
+      // chemical_drug_id → health.drugs(id) (serial PK), NOT the legacy CFR Drug_ID
+      // space. Converge onto the serial id exactly as health.drugs_given.drug_id does
+      // (LSJH-531); an unmapped CFR id has no matching drug and becomes NULL.
+      if (row.chemical_drug_id != null && lookups.drugIdMap) {
+        row.chemical_drug_id = lookups.drugIdMap[row.chemical_drug_id] ?? null;
+      }
+    },
   },
 
   {
@@ -1770,6 +1797,13 @@ const mappings = [
       { source: 'Stocktake_date', target: 'stocktake_date', transform: trimOrNull },
       { source: 'Stocktake_Qty', target: 'stocktake_qty', transform: toNum },
     ],
+    transformRow(rawRow, row, lookups) {
+      // Same CFR Drug_ID → serial health.drugs.id convergence as Chemical_inventory
+      // above, for keyspace consistency (LSJH-531).
+      if (row.chemical_drug_id != null && lookups.drugIdMap) {
+        row.chemical_drug_id = lookups.drugIdMap[row.chemical_drug_id] ?? null;
+      }
+    },
   },
 
   {
@@ -4074,7 +4108,7 @@ const mappings = [
                    Call_Wght, Batch_Number, Postpone_Feed_Application
             FROM dbo.PenFeedsData ORDER BY ID`,
     columns: [
-      { source: 'Feed_Date',                  target: 'feed_date',                  transform: toDate },
+      { source: 'Feed_Date',                  target: 'feed_date',                  transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
       { source: 'Truck_No',                   target: 'truck_no',                   transform: trimOrNull },
       { source: 'Load_Numb_for_Day',          target: 'load_numb_for_day',          transform: toNum },
       { source: 'Pen_Number_ID',              target: 'pen_number_id',              transform: toNum },
@@ -4156,7 +4190,7 @@ const mappings = [
             FROM dbo.CommodTrans ORDER BY CTR_ID`,
     columns: [
       { source: 'Commodity_Code',           target: 'commodity_code',           transform: toNum },
-      { source: 'Trans_Date',               target: 'trans_date',               transform: toDate },
+      { source: 'Trans_Date',               target: 'trans_date',               transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
       { source: 'Ref_No',                   target: 'ref_no',                   transform: trimOrNull },
       { source: 'Contract_No',              target: 'contract_no',              transform: trimOrNull },
       { source: 'Trans_Type',               target: 'trans_type',               transform: toNum },
@@ -4442,7 +4476,7 @@ const mappings = [
       { source: 'Truck_weight_now',  target: 'truck_weight_now',  transform: toNum },
       { source: 'ID',                target: 'id' },
       { source: 'BatchBox',          target: 'batchbox',          transform: trimOrNull },
-      { source: 'Feed_date',         target: 'feed_date',         transform: toDate },
+      { source: 'Feed_date',         target: 'feed_date',         transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
       { source: 'Last_Feed_for_pen', target: 'last_feed_for_pen', transform: trimOrNull },
     ],
   },
@@ -4460,7 +4494,7 @@ const mappings = [
     columns: [
       { source: 'BeastID',                target: 'beastid',                transform: toNum },
       { source: 'RevExp_Code',            target: 'revexp_code',            transform: toNum },
-      { source: 'Date_Fed',               target: 'date_fed',               transform: toDate },
+      { source: 'Date_Fed',               target: 'date_fed',               transform: (v) => toDate(v) || '1900-01-01T00:00:00.000Z' },
       { source: 'Rev_Exp_per_Unit',       target: 'rev_exp_per_unit',       transform: toNum },
       { source: 'Units',                  target: 'units',                  transform: toNum },
       { source: 'Extended_RevExp',        target: 'extended_revexp',        transform: toNum },

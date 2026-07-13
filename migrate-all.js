@@ -14,7 +14,7 @@
  *   MSSQL_HOST, MSSQL_USER, MSSQL_PASSWORD, MSSQL_DATABASE
  *
  * Required env vars (system DB — farm registry):
- *   SYSTEM_DATABASE_URL  e.g. postgres://lsj_admin:lsj_password@localhost:5433/lsj_system
+ *   SYSTEM_DATABASE_URL  e.g. postgres://USER:PASSWORD@localhost:5433/lsj_system
  *
  * Per-farm PG target databases use:
  *   DB_HOST, DB_PORT, DB_USER, DB_PASSWORD  (from env)
@@ -80,7 +80,7 @@ function makeFarmPool(dbName) {
     host:     process.env.DB_HOST     || 'localhost',
     port:     parseInt(process.env.DB_PORT || '5433', 10),
     user:     process.env.DB_USER     || 'lsj_admin',
-    password: process.env.DB_PASSWORD || 'lsj_password',
+    password: process.env.DB_PASSWORD, // no plaintext fallback — set in .env (gitignored)
     database: dbName,
     max:      parseInt(process.env.PG_POOL_MAX || '10', 10),
   });

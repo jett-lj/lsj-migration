@@ -1131,6 +1131,20 @@ app.get('*', (req, res) => {
 
 // ── Start ───────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`Migration UI: http://localhost:${PORT}`);
+// Bind to loopback by default. This tool is co-located on the customer's CFR VPS
+// and its mutating endpoints (/api/wipe → DROP SCHEMA CASCADE, /api/farm/clear-pg →
+// DROP DATABASE, /api/migrate, /api/settings) have NO authentication, so a
+// non-loopback bind exposes unauthenticated database destruction to anyone who can
+// reach the port. Override with UI_HOST only on a trusted, firewalled network, and
+// set UI_READONLY=1 whenever you do.
+const HOST = process.env.UI_HOST || '127.0.0.1';
+
+app.listen(PORT, HOST, () => {
+  console.log(`Migration UI: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  if (HOST !== '127.0.0.1' && HOST !== 'localhost' && !READONLY) {
+    console.warn(
+      `[SECURITY] UI bound to ${HOST} with mutations ENABLED and no auth. ` +
+      `Anyone who can reach :${PORT} can DROP databases. Set UI_READONLY=1 or bind 127.0.0.1.`,
+    );
+  }
 });

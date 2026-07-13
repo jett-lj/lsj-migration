@@ -2,3 +2,7 @@ node_modules/
 .env
 Cattle_databases/
 _archive/
+
+# Runtime output — never commit
+*.log
+reconcile-report.json

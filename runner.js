@@ -284,8 +284,22 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
   // so they don't wipe data loaded by prior sources.
   const skipTruncate = process.env.SKIP_TRUNCATE === '1';
   if (!dryRun && !tables && !skipTruncate) {
-    const allTargets = [...new Set(toRun.map(m => m.targetTable))];
-    allTargets.push('system.legacy_raw', 'system.migration_log');
+    // Only truncate a target if at least one mapping that writes it will actually
+    // run this pass. A mapping with an explicit sourceDatabase (e.g. 'CATTLE_feed')
+    // whose companion pool did NOT connect is skipped during load — truncating its
+    // target here would wipe previously-migrated data and never refill it (silent
+    // domain loss on a re-run while the feed DB is down).
+    const connectableTargets = new Set();
+    const orphanTargets = new Set();
+    for (const m of toRun) {
+      const srcAvailable = !m.sourceDatabase || m.sourceDatabase === defaultDb || !!mssqlPools[m.sourceDatabase];
+      (srcAvailable ? connectableTargets : orphanTargets).add(m.targetTable);
+    }
+    for (const t of connectableTargets) orphanTargets.delete(t);
+    if (orphanTargets.size) {
+      log.warn(`Preserving ${orphanTargets.size} target(s) whose source DB is not connected (NOT truncated): ${[...orphanTargets].join(', ')}`);
+    }
+    const allTargets = [...connectableTargets, 'system.legacy_raw', 'system.migration_log'];
     log.info(`Truncating ${allTargets.length} target tables for clean migration...`);
     await pgPool.query(`TRUNCATE ${allTargets.join(', ')} RESTART IDENTITY CASCADE`);
   } else if (!dryRun && tables && !skipTruncate) {
@@ -450,6 +464,10 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
       }
       log.info(`  Built breedIdMap: ${Object.keys(lookups.breedIdMap).length} entries`);
     }
+    // LSJH-768: finance.costs is migrated UNCODED (cost_code_id NULL); the app classifies
+    // migrated cost rows by revexp_code (reports/cost-expr.js uncodedExpense/uncodedRevenue),
+    // NOT by cost_code_id. We therefore deliberately do NOT build a revexp→cost_code_id map
+    // — coding the rows re-introduces the P&L errors LSJH-768 fixed. See the Costs mapping.
     if (tables.has('pen.pens')) {
       if (dryRun) {
         lookups.penNameToIdMap = {};
@@ -956,8 +974,14 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
       return clean;
     });
 
-    // All rows in a batch share the same columns
-    const keys = Object.keys(cleanRows[0]);
+    // Union the columns across ALL rows in the batch — never take them from
+    // cleanRows[0] alone. Some columns (cow_id, cost_code_id, status, pen_id, …)
+    // are set conditionally per row; if the first row happens to lack one, deriving
+    // the column list from row[0] silently drops that column's values for every
+    // other row in the batch (order-dependent data loss).
+    const keySet = new Set();
+    for (const r of cleanRows) for (const k of Object.keys(r)) keySet.add(k);
+    const keys = [...keySet];
     const colCount = keys.length;
 
     // Chunk to stay within PG's ~65535 parameter limit
@@ -971,7 +995,8 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
       for (let i = 0; i < chunk.length; i++) {
         const offset = i * colCount;
         valueClauses.push(`(${keys.map((_, j) => `$${offset + j + 1}`).join(', ')})`);
-        for (const k of keys) allVals.push(chunk[i][k]);
+        // A row may lack a unioned key (conditional column) — send NULL, not undefined.
+        for (const k of keys) allVals.push(chunk[i][k] ?? null);
       }
 
       try {
@@ -994,7 +1019,7 @@ async function processBatch(pgPool, batch, mapping, { log, dryRun, lookups }) {
         log.warn(`  Batch insert failed for ${targetTable}, falling back to row-by-row: ${err.message}`);
         for (const row of chunk) {
           try {
-            const vals = keys.map(k => row[k]);
+            const vals = keys.map(k => row[k] ?? null); // union key absent on this row → NULL
             const params = keys.map((_, j) => `$${j + 1}`);
             await client.query('SAVEPOINT sp');
             const r = await client.query(
@@ -1269,10 +1294,37 @@ async function convertTreatmentRegimes(pgPool, log) {
  * This is kept as a safety net.
  */
 async function resetSequences(pgPool, log) {
-  // v3 tables with IDENTITY columns don't receive explicit IDs during migration,
-  // so their sequences stay correct. If any table needs manual reset in the future,
-  // add it here with: ALTER TABLE schema.table ALTER COLUMN id RESTART WITH <max+1>
-  log.info('IDENTITY sequences verified — no manual reset needed for v3 schema.');
+  // Many mappings insert explicit legacy ids into SERIAL primary keys (cattle.cows,
+  // finance.deliverydockets, breeding.breeding_sires.sire_id, transport.locations.
+  // location_id, …). After TRUNCATE ... RESTART IDENTITY the owning sequences point
+  // at 1, so the first app-side INSERT collides (23505 → 500 / "already exists").
+  // LSJ-HUB's boot heal only fixes columns literally named 'id', so custom-named
+  // PKs never recover. Sweep every serial-backed PK column in the DB and bump its
+  // sequence past MAX(pk). Idempotent and safe to re-run.
+  const { rows } = await pgPool.query(`
+    SELECT n.nspname AS schema, c.relname AS tbl, a.attname AS col,
+           pg_get_serial_sequence(quote_ident(n.nspname)||'.'||quote_ident(c.relname), a.attname) AS seq
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_index i     ON i.indrelid = c.oid AND i.indisprimary
+    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND pg_get_serial_sequence(quote_ident(n.nspname)||'.'||quote_ident(c.relname), a.attname) IS NOT NULL
+  `);
+  let bumped = 0;
+  for (const r of rows) {
+    const ref = `"${r.schema}"."${r.tbl}"`;
+    try {
+      await pgPool.query(
+        `SELECT setval($1, GREATEST((SELECT COALESCE(MAX("${r.col}"), 0) FROM ${ref}), 1), true)`,
+        [r.seq],
+      );
+      bumped += 1;
+    } catch (e) {
+      log.warn(`  setval failed for ${ref}."${r.col}": ${e.message}`);
+    }
+  }
+  log.info(`Reset ${bumped} SERIAL PK sequence(s) past migrated max ids.`);
 }
 
 // ── Migration log helper ─────────────────────────────
@@ -1459,7 +1511,7 @@ async function validateMigration(mssqlPool, pgPool) {
     { table: 'weighing.weighing_events', fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
     { table: 'pen.penshistory',          fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
     { table: 'health.drugs_given',       fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
-    { table: 'health.drugs_given',       fk: 'drug_id',     ref: 'health.drugs',  refCol: 'drug_id' },
+    { table: 'health.drugs_given',       fk: 'drug_id',     ref: 'health.drugs',  refCol: 'id' },  // LSJH-531: drugs_given.drug_id is remapped to the serial drugs.id keyspace
     { table: 'finance.costs',            fk: 'beast_id',    ref: 'cattle.cows', refCol: 'id' },
     { table: 'health.sick_beast_records', fk: 'beast_id',   ref: 'cattle.cows', refCol: 'id' },
     { table: 'purchasing.purchase_lots', fk: 'vendor_id',   ref: 'contacts.contacts', refCol: 'contact_id' },
@@ -1504,6 +1556,84 @@ async function validateMigration(mssqlPool, pgPool) {
     });
   } catch (err) {
     checks.push({ check: 'Data quality: no null/empty ear_tags', passed: false, detail: err.message });
+  }
+
+  // 3b. No duplicate ACTIVE ear tags. LSJ-HUB builds a partial unique index
+  // uq_cows_ear_tag_active ON cattle.cows(ear_tag) WHERE status='active' at first
+  // boot (LSJH-346). If migrated data has >1 active cow sharing a tag, that CREATE
+  // fails, is warn-skipped, and the box stays index-less — after which the app's
+  // ON CONFLICT (ear_tag) WHERE status='active' writers throw 42P10 at runtime.
+  // Deriving cows.status now makes this rare (historic sold/died cows drop out),
+  // but any genuine active duplicate must be resolved before go-live.
+  try {
+    const res = await pgPool.query(`
+      SELECT COUNT(*) AS cnt FROM (
+        SELECT ear_tag FROM cattle.cows
+        WHERE status = 'active' AND ear_tag IS NOT NULL AND ear_tag <> ''
+        GROUP BY ear_tag HAVING COUNT(*) > 1
+      ) d`);
+    const dupTags = parseInt(res.rows[0].cnt);
+    checks.push({
+      check: 'Data quality: no duplicate active ear_tags (LSJH-346 index)',
+      passed: dupTags === 0,
+      detail: dupTags === 0
+        ? 'no duplicate active ear tags'
+        : `${dupTags} ear tag(s) shared by >1 ACTIVE cow — resolve before first app boot (run LSJ-HUB scripts/dedupe-ear-tags.js) or uq_cows_ear_tag_active will be skipped`,
+    });
+  } catch (err) {
+    checks.push({ check: 'Data quality: no duplicate active ear_tags (LSJH-346 index)', passed: false, detail: err.message });
+  }
+
+  // 3c. No duplicate ACTIVE EIDs. LSJ-HUB builds a partial unique index
+  // uq_cows_eid_active ON cattle.cows((REPLACE(eid,' ','')))
+  //   WHERE status='active' AND eid IS NOT NULL AND REPLACE(eid,' ','') <> ''
+  // at first boot (LSJH-673). Duplicate active EIDs make that CREATE fail (warn-skipped),
+  // leaving scanner/dispatch EID lookups able to bind the WRONG beast. Mirror the exact
+  // normalized-and-non-empty predicate so this pre-flight matches what the index enforces.
+  try {
+    const res = await pgPool.query(`
+      SELECT COUNT(*) AS cnt FROM (
+        SELECT REPLACE(eid, ' ', '') AS neid FROM cattle.cows
+        WHERE status = 'active' AND eid IS NOT NULL AND REPLACE(eid, ' ', '') <> ''
+        GROUP BY REPLACE(eid, ' ', '') HAVING COUNT(*) > 1
+      ) d`);
+    const dupEids = parseInt(res.rows[0].cnt);
+    checks.push({
+      check: 'Data quality: no duplicate active EIDs (LSJH-673 index)',
+      passed: dupEids === 0,
+      detail: dupEids === 0
+        ? 'no duplicate active EIDs'
+        : `${dupEids} EID(s) shared by >1 ACTIVE cow — resolve before first app boot (run LSJ-HUB scripts/dedupe-eids.js) or uq_cows_eid_active is skipped and EID scans can bind the wrong beast`,
+    });
+  } catch (err) {
+    checks.push({ check: 'Data quality: no duplicate active EIDs (LSJH-673 index)', passed: false, detail: err.message });
+  }
+
+  // 3d. finance.costs feed-aggregate uniqueness. LSJ-HUB builds a partial unique index
+  // uq_costs_feed_aggregate ON finance.costs(cow_id, revexp_code, ration)
+  //   WHERE cow_id IS NOT NULL AND ration IS NOT NULL
+  // at first boot (LSJH-663), and the PG-native apply-feed upsert uses it as its ON
+  // CONFLICT arbiter. CFR stores many per-day cost rows per (beast, revexp, ration);
+  // migrating them verbatim yields duplicates that (a) make the CREATE fail (warn-skipped)
+  // and then (b) 42P10 the native apply-feed path. This is a REPORT only — resolving it
+  // (aggregating or scoping migrated feed cost rows) is a data-model decision, not automatic.
+  try {
+    const res = await pgPool.query(`
+      SELECT COUNT(*) AS cnt FROM (
+        SELECT cow_id, revexp_code, ration FROM finance.costs
+        WHERE cow_id IS NOT NULL AND ration IS NOT NULL
+        GROUP BY cow_id, revexp_code, ration HAVING COUNT(*) > 1
+      ) d`);
+    const dupAgg = parseInt(res.rows[0].cnt);
+    checks.push({
+      check: 'Data quality: finance.costs feed-aggregate uniqueness (LSJH-663 index)',
+      passed: dupAgg === 0,
+      detail: dupAgg === 0
+        ? 'no duplicate (cow_id, revexp_code, ration) cost rows'
+        : `${dupAgg} (cow_id, revexp_code, ration) group(s) have >1 row — uq_costs_feed_aggregate will be skipped at boot and PG-native apply-feed will 42P10; decide on aggregating/scoping migrated feed cost rows before enabling PG-native feeding`,
+    });
+  } catch (err) {
+    checks.push({ check: 'Data quality: finance.costs feed-aggregate uniqueness (LSJH-663 index)', passed: false, detail: err.message });
   }
 
   // 4. No negative weights

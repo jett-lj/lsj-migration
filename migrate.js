@@ -32,11 +32,12 @@ const path = require('path');
 // ── Parse CLI args ──────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { dryRun: false, tables: null, validateOnly: false, auditOnly: false, reconcileOnly: false, checkMappings: false, batchSize: null, farm: null, output: null };
+  const args = { dryRun: false, tables: null, validateOnly: false, auditOnly: false, reconcileOnly: false, checkMappings: false, batchSize: null, farm: null, output: null, force: false };
 
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--dry-run')       args.dryRun = true;
+    else if (arg === '--force')    args.force = true;
     else if (arg === '--validate') args.validateOnly = true;
     else if (arg === '--audit')    args.auditOnly = true;
     else if (arg === '--reconcile') args.reconcileOnly = true;
@@ -75,17 +76,22 @@ function pgConfig() {
 
 // ── Apply schema before migration ───────────────────
 
-// Matches v5 DO $$ FK blocks (containing _fk DECLARE) and any standalone FK ALTERs
-const FK_DO_BLOCK = /DO \$\$\s*DECLARE\s+_fk\b[\s\S]*?\$\$;/g;
-const FK_INLINE   = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+// FK constraints live inside DO $$ ... $$; blocks — a main `_fk` block (95 FKs) plus the
+// LSJH-530/531/404 repoint waves. Match a WHOLE such block (one containing FOREIGN KEY),
+// tempered with (?!\$\$;) so a match can never cross a $$; boundary into an unrelated
+// DO block (triggers, partitions, unique-index deploys). We deliberately do NOT strip FK
+// ALTERs at the substring level: the canonical schema embeds `ALTER TABLE ... FOREIGN KEY`
+// as STRING LITERALS inside these DO blocks, so a substring strip mangles them into
+// "mismatched parentheses". Stripping whole blocks (below) keeps the SQL valid.
+const FK_DO_BLOCK = /DO \$\$(?:(?!\$\$;)[\s\S])*?FOREIGN KEY(?:(?!\$\$;)[\s\S])*?\$\$;/g;
 
 async function ensureSchema(pgPool) {
   const schemaPath = path.join(__dirname, 'schema-farm-v6.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
   // Strip FK constraint blocks — they are restored after data load by restoreForeignKeys()
-  const schemaWithoutFks = schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, '');
+  const schemaWithoutFks = schema.replace(FK_DO_BLOCK, '');
   await pgPool.query(schemaWithoutFks);
-  console.log('[INFO] PostgreSQL v5 schema applied (FKs deferred).');
+  console.log('[INFO] PostgreSQL schema applied (FK blocks deferred).');
 
   // Fix stale column types from older schema versions (v3/v4 created some TEXT cols as INT)
   await fixColumnTypes(pgPool);
@@ -194,23 +200,20 @@ async function restoreForeignKeys(pgPool) {
   const schemaPath = path.join(__dirname, 'schema-farm-v6.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
 
-  // Extract ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY blocks (inline + from DO blocks)
-  // First extract from DO $$ blocks
+  // Extract the ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY statements from the FK DO
+  // blocks. The main `_fk` block carries them as 2-element ARRAY['name','ALTER TABLE ...']
+  // entries (95 of them); the LSJH-530/531/404 repoint waves use other ARRAY shapes we do
+  // NOT parse here — those FKs self-heal on the app's first boot (initFarmDb re-applies the
+  // canonical schema), which is acceptable because dropAllForeignKeys already protects the
+  // load and the app converges the constraints.
   const doBlocks = [...schema.matchAll(FK_DO_BLOCK)];
   const fkStatements = [];
   for (const doBlock of doBlocks) {
-    // Extract ARRAY['name', 'ALTER TABLE ...'] entries
     const arrayRe = /ARRAY\['([^']+)',\s*'(ALTER TABLE[^']+)'/g;
     let m;
     while ((m = arrayRe.exec(doBlock[0])) !== null) {
       fkStatements.push({ constraintName: m[1], sql: m[2] });
     }
-  }
-  // Also extract standalone FK ALTERs (from schema text without DO blocks to avoid duplicates)
-  const schemaWithoutDoBlocks = schema.replace(FK_DO_BLOCK, '');
-  const inlineMatches = [...schemaWithoutDoBlocks.matchAll(FK_INLINE)];
-  for (const match of inlineMatches) {
-    fkStatements.push({ constraintName: match[1], sql: match[0].replace(/;$/, '') });
   }
 
   // Add each FK constraint with NOT VALID (skips existing-data check)
@@ -221,6 +224,22 @@ async function restoreForeignKeys(pgPool) {
       await pgPool.query(sql + ' NOT VALID');
       added++;
     } catch (err) {
+      // Partitioned tables (costs_feed_detail, penfeedsdata, digistar_data_history, …)
+      // reject ADD CONSTRAINT ... NOT VALID (PG limitation). Retry as a plain validating
+      // ADD CONSTRAINT, which IS allowed on partitioned parents. Data is already loaded
+      // at this point, so this validates immediately (clean data → added; orphans → WARN,
+      // and the FK then self-heals on the app's first boot).
+      if (/NOT VALID foreign key on partitioned table/i.test(err.message)) {
+        try {
+          await pgPool.query(sql);
+          added++;
+          continue;
+        } catch (err2) {
+          console.warn(`[WARN] FK add failed (partitioned, deferred to app boot): ${constraintName} — ${err2.message}`);
+          failures.push({ constraint: constraintName, error: err2.message });
+          continue;
+        }
+      }
       console.warn(`[WARN] FK add failed: ${constraintName} — ${err.message}`);
       failures.push({ constraint: constraintName, error: err.message });
     }
@@ -420,6 +439,31 @@ async function main() {
     tables:    cliArgs.tables,
   };
 
+  // ── Target-safety guard ─────────────────────────────
+  // A full run TRUNCATEs every mapped target (+ system.legacy_raw / migration_log) with
+  // RESTART IDENTITY CASCADE before reloading. If DB_NAME is accidentally pointed at an
+  // in-use / already-populated database, that silently WIPES real data. Refuse to proceed
+  // against a NON-EMPTY target unless --force is given (the intended path for a deliberate
+  // re-migration onto an already-migrated DB).
+  if (!opts.dryRun && !cliArgs.force) {
+    const { rows: [{ db }] } = await pgPool.query('SELECT current_database() AS db');
+    let existing = 0;
+    try {
+      const r = await pgPool.query('SELECT COUNT(*)::int AS n FROM cattle.cows');
+      existing = r.rows[0].n;
+    } catch (_) { /* cattle.cows not present yet — treat as fresh/empty */ }
+    if (existing > 0) {
+      console.error(
+        `\n[ABORT] Target database "${db}" already contains ${existing.toLocaleString()} cattle.cows row(s).\n` +
+        `        A full migration TRUNCATEs every mapped target (RESTART IDENTITY CASCADE) before reloading —\n` +
+        `        running it here would WIPE that data. Point DB_NAME at a fresh empty database for a first\n` +
+        `        migration, or re-run with --force if you deliberately intend to re-migrate onto this DB.\n`
+      );
+      await closePools();
+      process.exit(2);
+    }
+  }
+
   // Drop FK constraints so inserts don't fail on load order
   if (!opts.dryRun) {
     await dropAllForeignKeys(pgPool);
@@ -513,7 +557,13 @@ async function main() {
   process.exit(hasFailures ? 1 : 0);
 }
 
-main().catch(err => {
-  console.error('[FATAL]', err.message);
-  closePools().finally(() => process.exit(1));
-});
+// Only run when invoked directly as a CLI — NOT when require()'d (a bare require
+// used to kick off a live migration against .env, a serious footgun for tests/tools).
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[FATAL]', err.message);
+    closePools().finally(() => process.exit(1));
+  });
+}
+
+module.exports = { main, parseArgs, ensureSchema, dropAllForeignKeys, restoreForeignKeys, pgConfig };

@@ -17,7 +17,7 @@ tools:
 You are an expert database architect specialising in **migrating legacy SQL Server
 schemas to clean, enterprise-grade PostgreSQL**. You work inside the `lsj-migration`
 repository which migrates  SQL Server tables from the `CATTLE` database into a
-modern PostgreSQL schema defined in `schema-farm.sql`.
+modern PostgreSQL schema defined in `schema-farm-v6.sql`.
 
 ## Domain
 
@@ -55,7 +55,7 @@ diseases, cost codes, rations, market categories, and many lookup tables.
 
 | File | Purpose |
 |---|---|
-| `schema-farm.sql` | Target PostgreSQL DDL (CREATE TABLE statements) |
+| `schema-farm-v6.sql` | Target PostgreSQL DDL (CREATE TABLE statements) |
 | `schema-system.sql` | System/audit tables (migration_log, legacy_raw, agent_issues) |
 | `mappings.js` | Column-level ETL transforms per table |
 | `categories.js` | All 171 legacy tables with strategy: mapped / raw / excluded |
@@ -70,7 +70,7 @@ diseases, cost codes, rations, market categories, and many lookup tables.
 ## Approach
 
 ### When adding columns to an existing mapped table:
-1. Check `schema-farm.sql` — the PG column may already exist but lack a mapping
+1. Check `schema-farm-v6.sql` — the PG column may already exist but lack a mapping
 2. If the column does not exist, add it with the correct type and constraints
 3. Add the mapping in `mappings.js` inside the table's `columns` array
 4. Update `MIGRATION-CHECKLIST.md` to mark the column ✅
@@ -84,7 +84,7 @@ diseases, cost codes, rations, market categories, and many lookup tables.
    WHERE TABLE_NAME = 'TableName'
    ORDER BY ORDINAL_POSITION
    ```
-2. Design the PostgreSQL table in `schema-farm.sql` following the conventions above
+2. Design the PostgreSQL table in `schema-farm-v6.sql` following the conventions above
 3. Add the table mapping to `mappings.js`
 4. Change the table's strategy from `'raw'` to `'mapped'` in `categories.js`
 5. Update `MIGRATION-CHECKLIST.md`
@@ -97,7 +97,7 @@ diseases, cost codes, rations, market categories, and many lookup tables.
 - Use `INFORMATION_SCHEMA.COLUMNS` for metadata queries
 
 ### PostgreSQL conventions in this project
-- Schema file: `schema-farm.sql` uses `DROP TABLE IF EXISTS ... CASCADE` then `CREATE TABLE`
+- Schema file: `schema-farm-v6.sql` uses idempotent `CREATE TABLE IF NOT EXISTS` (safe to re-apply; LSJ-HUB re-runs it at every boot)
 - All tables include `id SERIAL PRIMARY KEY` unless they are join tables
 - Foreign keys reference parent tables that are created first (order matters)
 - Boolean columns default to `FALSE` unless otherwise specified

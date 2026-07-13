@@ -20,7 +20,7 @@ const PG = {
   host:     process.env.DB_HOST     || 'localhost',
   port:     parseInt(process.env.DB_PORT || '5432', 10),
   user:     process.env.DB_USER     || 'lsj_admin',
-  password: process.env.DB_PASSWORD || 'lsj_password',
+  password: process.env.DB_PASSWORD, // no plaintext fallback — set in .env (gitignored)
   database: 'postgres',
   max: 1,
 };

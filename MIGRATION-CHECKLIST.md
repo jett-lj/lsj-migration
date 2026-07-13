@@ -652,4 +652,4 @@ Every column from every row is preserved. Queryable via `SELECT row_data->>'colu
 | **Columns unmapped (in mapped tables)** | **~314** |
 | New schema columns with matching legacy data but no mapping* | ~35 |
 
-> \* These columns exist in `schema-farm.sql` already (e.g. `contacts.mobile`, `purchase_lots.dpi_charges`) but have no mapping in `mappings.js`. They are the lowest-hanging fruit to wire up.
+> \* These columns exist in `schema-farm-v6.sql` already (e.g. `contacts.mobile`, `purchase_lots.dpi_charges`) but have no mapping in `mappings.js`. They are the lowest-hanging fruit to wire up.

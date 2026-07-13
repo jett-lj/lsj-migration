@@ -72,10 +72,13 @@ beforeAll(async () => {
   }
   pgPool = testPool();
   const schema = fs.readFileSync(V5_SCHEMA, 'utf8');
-  const FK_DO_BLOCK = /DO \$\$\s*DECLARE\s+_fk\b[\s\S]*?\$\$;/g;
-  const FK_INLINE   = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
+  // Tempered whole-block FK strip (matches migrate.js). A substring FK_INLINE strip corrupts
+  // the canonical schema's embedded ALTER-TABLE string literals ("mismatched parentheses").
+  // FK_COL_REF strips inline column-level FKs so test inserts run unconstrained (as production
+  // does via dropAllForeignKeys).
+  const FK_DO_BLOCK = /DO \$\$(?:(?!\$\$;)[\s\S])*?FOREIGN KEY(?:(?!\$\$;)[\s\S])*?\$\$;/g;
   const FK_COL_REF  = /REFERENCES\s+\S+\([^)]+\)(\s+ON\s+(DELETE|UPDATE)\s+\w+)*/g;  // inline column-level FKs
-  await pgPool.query(schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, '').replace(FK_COL_REF, ''));
+  await pgPool.query(schema.replace(FK_DO_BLOCK, '').replace(FK_COL_REF, ''));
 }, 60000);
 
 afterAll(async () => {
@@ -730,7 +733,7 @@ describe('Per-table column integration', () => {
     expect(c.marbling_bonus_lot).toBe('MB001');
     expect(c.died).toBe(false);
     expect(c.pen_number).toBe('P01');
-    expect(c.status).toBe('active');         // status not mapped; uses schema DEFAULT
+    expect(c.status).toBe('sold');           // derived from Sale_Date (2024-06-20) via deriveCowStatus
     expect(c.legacy_modified_at).not.toBeNull();
     // New 8 columns
     expect(c.weight_gain_kg).toBeCloseTo(239.5);

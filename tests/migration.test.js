@@ -77,9 +77,13 @@ beforeAll(async () => {
   const schema = fs.readFileSync(V3_SCHEMA, 'utf8');
   // Strip FK constraints so integration tests can insert without prereqs
   // v5 wraps FKs in DO $$ blocks with _fks TEXT[][] â€” strip those, plus any standalone ALTER TABLE FK lines
-  const FK_DO_BLOCK = /DO \$\$\s*DECLARE\s+_fk\b[\s\S]*?\$\$;/g;
-  const FK_INLINE    = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
-  await pgPool.query(schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, ''));
+  // Tempered whole-block FK strip (matches migrate.js). A substring FK_INLINE strip corrupts
+  // the canonical schema's embedded ALTER-TABLE string literals ("mismatched parentheses").
+  // Inline column-level FKs are KEPT (this suite asserts "some FKs exist" and inserts in
+  // dependency order); only the ALTER-based _fk DO block is stripped so out-of-order loads
+  // don't fail — matching the tool's own ensureSchema.
+  const FK_DO_BLOCK = /DO \$\$(?:(?!\$\$;)[\s\S])*?FOREIGN KEY(?:(?!\$\$;)[\s\S])*?\$\$;/g;
+  await pgPool.query(schema.replace(FK_DO_BLOCK, ''));
 });
 
 afterAll(async () => {
@@ -850,7 +854,7 @@ describe('Migration runner ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â integration', 
       expect(rows.rows[2].revexp_code).toBe(3);
     });
 
-    it('resolves cost_code_id when migrating costs rows', async () => {
+    it('leaves migrated costs rows UNCODED — cost_code_id NULL, classified by revexp_code (LSJH-768)', async () => {
       const mock = createMockMssql({
         'Breeds': [{ Breed_Code: 1, Breed_Name: 'Angus' }],
         'FeedDB_Pens_File': [],
@@ -890,6 +894,10 @@ describe('Migration runner ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â integration', 
       expect(costs.rows).toHaveLength(1);
       expect(costs.rows[0].extended_revexp).toBe(250);
       expect(costs.rows[0].units).toBe(50);
+      // LSJH-768: migrated rows stay UNCODED — cost_code_id NULL, revexp_code carries
+      // the classification (reports/cost-expr.js reads it). Coding these rows re-introduced
+      // the P&L sign / carcase double-count bugs LSJH-768 fixed.
+      expect(costs.rows[0].cost_code_id).toBeNull();
 
       // cost_code_id must be resolved ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â never null
       // revexp_code is directly mapped from source

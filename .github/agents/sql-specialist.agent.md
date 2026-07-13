@@ -67,7 +67,7 @@ modern PostgreSQL.
 ### Key Files
 | File | Purpose |
 |---|---|
-| `schema-farm.sql` | Target PostgreSQL DDL for per-farm databases |
+| `schema-farm-v6.sql` | Target PostgreSQL DDL for per-farm databases |
 | `schema-system.sql` | System/audit tables |
 | `optimized_schema_postgres_v3.sql` | Full PostgreSQL schema (all schemas/tables) |
 | `mappings.js` | Column-level ETL transforms per table |

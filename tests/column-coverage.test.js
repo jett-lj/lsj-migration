@@ -70,9 +70,12 @@ beforeAll(async () => {
   pgPool = testPool();
   const schema = fs.readFileSync(V3_SCHEMA, 'utf8');
   // Strip FK constraints Ã¢â‚¬â€ v5 wraps FKs in DO $$ blocks with _fks TEXT[][]
-  const FK_DO_BLOCK = /DO \$\$\s*DECLARE\s+_fk\b[\s\S]*?\$\$;/g;
-  const FK_INLINE    = /ALTER TABLE \S+ ADD CONSTRAINT (fk_\S+)\s+FOREIGN KEY \([^)]+\) REFERENCES [^;]+;/g;
-  await pgPool.query(schema.replace(FK_DO_BLOCK, '').replace(FK_INLINE, ''));
+  // Tempered whole-block FK strip (matches migrate.js). A substring FK_INLINE strip corrupts
+  // the canonical schema's embedded ALTER-TABLE string literals ("mismatched parentheses").
+  // Inline column-level FKs are KEPT (inserts here run in dependency order); only the
+  // ALTER-based _fk DO block is stripped — matching the tool's own ensureSchema.
+  const FK_DO_BLOCK = /DO \$\$(?:(?!\$\$;)[\s\S])*?FOREIGN KEY(?:(?!\$\$;)[\s\S])*?\$\$;/g;
+  await pgPool.query(schema.replace(FK_DO_BLOCK, ''));
 }, 30000);
 
 afterAll(async () => {
@@ -1985,10 +1988,13 @@ describe('Layer 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â FK chain tests', () => 
       lookups: { beastIdMap: { 7002: cowId }, costCodeMap: { 99: ccId } },
     });
 
-    const rows = await pgPool.query('SELECT revexp_code, rev_exp_per_unit FROM finance.costs');
+    const rows = await pgPool.query('SELECT revexp_code, cost_code_id, rev_exp_per_unit FROM finance.costs');
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0].revexp_code).toBe(ccId);
     expect(rows.rows[0].rev_exp_per_unit).toBeCloseTo(5);
+    // LSJH-768: migrated cost rows are UNCODED — revexp_code is preserved and cost_code_id
+    // stays NULL (the app classifies migrated rows by revexp_code, not cost_code_id).
+    expect(rows.rows[0].cost_code_id).toBeNull();
   });
 
   it('pen auto-create ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unknown pen is created on demand', async () => {

@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS cattle.cull_reasons (
   pay_rate_per_kg NUMERIC(12,4),
   induction_cull  BOOLEAN DEFAULT FALSE,
   later_cull      BOOLEAN DEFAULT FALSE,
+  active          BOOLEAN NOT NULL DEFAULT TRUE,
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ
 );
@@ -154,7 +155,8 @@ CREATE TABLE IF NOT EXISTS cattle.location_types (
   id          SERIAL PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,
   category    TEXT DEFAULT 'feedlot' CHECK(category IN ('feedlot','paddock','agistor','custom')),
-  description TEXT
+  description TEXT,
+  active      BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 -- Lookup: sire_lines (LSJH-253: CFR Sire_Lines, Rangers Valley parity)
@@ -611,6 +613,55 @@ CREATE TABLE IF NOT EXISTS map.farm_boundary (
 
 
 -- ████████████████████████████████████████████████████████████████
+-- ██  COMPLIANCE  (LSJH-105)
+-- ██  Biosecurity visitor & driver register — LPA / feedlot audit-readiness.
+-- ██  Accessed via schema-qualified names (not in FARM_SEARCH_PATH), as map.* is.
+-- ████████████████████████████████████████████████████████████████
+
+CREATE SCHEMA IF NOT EXISTS compliance;
+
+-- biosecurity_visitors — one row per visitor/driver sign-in. Drivers reuse the
+-- same table (visitor_type='driver') with the NVD/PIC/load columns populated.
+-- recent-other-property risk is computed at read time from last_property_date.
+CREATE TABLE IF NOT EXISTS compliance.biosecurity_visitors (
+  id                 SERIAL PRIMARY KEY,
+  visitor_type       TEXT NOT NULL DEFAULT 'visitor'
+                     CHECK (visitor_type IN ('visitor','driver')),
+  visitor_name       TEXT NOT NULL,
+  company            TEXT,
+  phone              TEXT,
+  vehicle_rego       TEXT,
+  purpose            TEXT,
+  host_name          TEXT,
+  last_property_pic  TEXT,
+  last_property_date DATE,
+  -- driver-specific
+  nvd_ref            TEXT,
+  source_pic         TEXT,
+  dest_pic           TEXT,
+  load_description   TEXT,
+  -- driver NVD/NLIS document scan (LSJH-105 slice 1): stored under
+  -- uploads/farms/<farmId>/nvd-docs; DB holds the relative path + metadata.
+  nvd_doc            TEXT,
+  nvd_doc_filename   TEXT,
+  nvd_doc_content_type TEXT,
+  nvd_doc_size       INTEGER,
+  -- declarations
+  declaration_signed BOOLEAN NOT NULL DEFAULT FALSE,
+  wheel_wash_done    BOOLEAN NOT NULL DEFAULT FALSE,
+  arrived_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  departed_at        TIMESTAMPTZ,
+  notes              TEXT,
+  recorded_by        TEXT,
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_biosec_visitors_arrived ON compliance.biosecurity_visitors(arrived_at DESC);
+CREATE INDEX IF NOT EXISTS idx_biosec_visitors_type    ON compliance.biosecurity_visitors(visitor_type);
+CREATE INDEX IF NOT EXISTS idx_biosec_visitors_onsite  ON compliance.biosecurity_visitors(departed_at) WHERE departed_at IS NULL;
+
+
+-- ████████████████████████████████████████████████████████████████
 -- ██  HEALTH & VETERINARY
 -- ██  Drugs, sickness records, autopsies, treatments, chemical inventory
 -- ████████████████████████████████████████████████████████████████
@@ -674,7 +725,10 @@ CREATE TABLE IF NOT EXISTS health.drugs (
 -- this is the LSJ-HUB-native register: which beast got which HGP, when, where.
 CREATE TABLE IF NOT EXISTS health.hgp_implants (
   id            SERIAL PRIMARY KEY,
-  cow_id        INTEGER NOT NULL REFERENCES cattle.cows(id) ON DELETE CASCADE,
+  -- RESTRICT, not CASCADE: the HGP register is regulatory (LPA/HGP-free)
+  -- history — deleting a cow must never erase it (LSJH-665). Existing farm
+  -- DBs carry the pre-fix CASCADE FK; db/index.js repairs it by catalog shape.
+  cow_id        INTEGER NOT NULL REFERENCES cattle.cows(id) ON DELETE RESTRICT,
   drug_id       INTEGER NOT NULL REFERENCES health.drugs(id),
   implant_date  DATE NOT NULL,
   batch_number  TEXT,
@@ -980,6 +1034,9 @@ CREATE TABLE IF NOT EXISTS health.drug_disposals (
 );
 
 -- drug_hgp_forms (V2: 15 clients)
+-- LSJH-453 [CFR D5] HGP declaration-form scan store. hgp_decl_form_filename is
+-- the user-typed label; stored_path/stored_filename/content_type/file_size hold
+-- the actually-uploaded scan (under uploads/farms/<farmId>/hgp-forms).
 CREATE TABLE IF NOT EXISTS health.drug_hgp_forms (
   id                    SERIAL PRIMARY KEY,
   drug_receival_id      INTEGER,
@@ -1243,6 +1300,10 @@ CREATE TABLE IF NOT EXISTS feed.rations (
   ration_colour                   VARCHAR(15),
   stationary_mixer                BOOLEAN,
   liquids_premix_ration           BOOLEAN,
+  -- LSJH-491 (CFR D17): TRUE marks a liquid-pot VIRTUAL ration (F~nnn) that, at
+  -- feed-out / Digistar send, explodes into the component commodities mapped in
+  -- feed.virtual_ration_components — never fed as a single line.
+  is_liquid_pot                   BOOLEAN NOT NULL DEFAULT FALSE,
   pcnt_feedweight_tolerance       REAL,
   -- Misc
   notes                           VARCHAR(50),
@@ -1258,6 +1319,20 @@ CREATE TABLE IF NOT EXISTS feed.rations (
 COMMENT ON COLUMN feed.rations.mmef IS 'Multiple of Maintenance Energy Factor (e.g. 2.0–3.5×). AU industry convention; per-ration metadata.';
 CREATE INDEX IF NOT EXISTS idx_rations_ration_code ON feed.rations(ration_code);
 
+-- ration_versions (LSJH-159 — audit trail; one row per saved version of a ration)
+CREATE TABLE IF NOT EXISTS feed.ration_versions (
+  id            SERIAL PRIMARY KEY,
+  ration_id     INTEGER NOT NULL REFERENCES feed.rations(id) ON DELETE CASCADE,
+  version_no    INTEGER NOT NULL DEFAULT 1,
+  snapshot      JSONB NOT NULL,
+  -- changed_by references the system DB's `users` table — cross-DB FKs are
+  -- not supported by Postgres, so we store the ID without a constraint.
+  changed_by    INTEGER,
+  changed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (ration_id, version_no)
+);
+CREATE INDEX IF NOT EXISTS idx_ration_versions_ration_id ON feed.ration_versions (ration_id, version_no DESC);
+
 -- ration_recipe_records (V2: 17 clients — recipe ingredients)
 CREATE TABLE IF NOT EXISTS feed.ration_recipe_records (
   id              SERIAL PRIMARY KEY,
@@ -1269,6 +1344,33 @@ CREATE TABLE IF NOT EXISTS feed.ration_recipe_records (
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ
 );
+
+-- LSJH-491 (CFR D17) — liquid-pot virtual rations (Rangers Valley). A virtual
+-- ration coded F~nnn is NOT fed as a single line: at feed-out / Digistar send it
+-- EXPLODES into its liquid component commodities (molasses / liquid supplements)
+-- at fixed ratios. feed.rations.is_liquid_pot flags such a ration; the per-virtual
+-- component map (which commodities, in what ratio) lives in the table below.
+-- Distinct from LSJH-302 (the automated liquid-batcher matcher).
+CREATE TABLE IF NOT EXISTS feed.virtual_ration_components (
+  id                       SERIAL PRIMARY KEY,
+  virtual_ration_code      SMALLINT NOT NULL REFERENCES feed.rations(ration_code) ON DELETE CASCADE,
+  component_commodity_code SMALLINT NOT NULL,
+  component_commodity_name TEXT,
+  -- ratio_pcnt = this commodity's share of the virtual ration's fed weight.
+  -- The components for a virtual ration must sum to 100 (enforced at the Zod /
+  -- service layer); a CHECK bounds each row to a sane 0<pct<=100.
+  ratio_pcnt               NUMERIC(7,4) NOT NULL CHECK (ratio_pcnt > 0 AND ratio_pcnt <= 100),
+  loading_seq              SMALLINT,
+  created_at               TIMESTAMPTZ DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ,
+  -- one row per (virtual ration, component commodity): re-importing a map upserts
+  -- rather than duplicating a component line.
+  UNIQUE (virtual_ration_code, component_commodity_code)
+);
+CREATE INDEX IF NOT EXISTS idx_virtual_ration_components_code
+  ON feed.virtual_ration_components (virtual_ration_code);
+COMMENT ON TABLE feed.virtual_ration_components IS
+  'LSJH-491 (CFR D17): maps a liquid-pot virtual ration (feed.rations.is_liquid_pot=TRUE) to its component commodities + ratios, used to EXPLODE an F~nnn line into its liquid components at feed-out / Digistar export. PG is authoritative.';
 
 -- ration_regimes (V2: 17 clients — pen ration schedules, consolidated Standard + GL)
 CREATE TABLE IF NOT EXISTS feed.ration_regimes (
@@ -1284,6 +1386,11 @@ CREATE TABLE IF NOT EXISTS feed.ration_regimes (
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ
 );
+
+-- LSJH-441 (CFR D15) — the per-pen AM/PM dated ration calendar's partial unique
+-- index on (pen_id, feed_date) is created in the late ALTER section below, AFTER
+-- the feed_date column is added to feed.ration_regimes (it does not exist on the
+-- inline CREATE TABLE above).
 
 -- ration_load_sizes (V2: 17 clients — truck load weights per ration)
 CREATE TABLE IF NOT EXISTS feed.ration_load_sizes (
@@ -1313,17 +1420,24 @@ CREATE TABLE IF NOT EXISTS feed.ration_calc_constants (
 );
 
 -- dual_ration_feeding (V2: 14 clients — dual ration support)
+-- CANONICAL ration columns are rationN_code / rationN_pcnt (N = 1..3): these are
+-- the columns the /api/dual-ration-feeding route reads and writes. A parallel
+-- ration_code_feedN / ration_name_feedN / ration_pcnt_feedN column set is added
+-- by the migration block further down — those are LEGACY/UNUSED (a CFR-shaped
+-- mirror that the route never populates). Do NOT write the *_feedN columns from
+-- new code and do NOT drop them (kept for CFR import compatibility); treat the
+-- rationN_ set as the single source of truth (LSJH-448 review finding [5]).
 CREATE TABLE IF NOT EXISTS feed.dual_ration_feeding (
   id                SERIAL PRIMARY KEY,
   pen_id            INTEGER,
   pen_name          TEXT,
   num_head          SMALLINT,
-  ration1_code      SMALLINT,
-  ration2_code      SMALLINT,
-  ration3_code      SMALLINT,
-  ration1_pcnt      NUMERIC(5,2),
-  ration2_pcnt      NUMERIC(5,2),
-  ration3_pcnt      NUMERIC(5,2),
+  ration1_code      SMALLINT,       -- canonical
+  ration2_code      SMALLINT,       -- canonical
+  ration3_code      SMALLINT,       -- canonical
+  ration1_pcnt      NUMERIC(5,2),   -- canonical
+  ration2_pcnt      NUMERIC(5,2),   -- canonical
+  ration3_pcnt      NUMERIC(5,2),   -- canonical
   total_kgs_day     NUMERIC(10,2),
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   updated_at        TIMESTAMPTZ
@@ -1345,135 +1459,13 @@ CREATE TABLE IF NOT EXISTS feed.titration_ration_regimes (
   updated_at        TIMESTAMPTZ
 );
 
--- bunk_code_desc (V2: 17 clients — bunk score descriptions)
-CREATE TABLE IF NOT EXISTS feed.bunk_code_desc (
-  id          SERIAL PRIMARY KEY,
-  code        SMALLINT NOT NULL,
-  description TEXT,
-  ration_type SMALLINT REFERENCES feed.ration_types(ration_type_id),
-  active      BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ
-);
-
--- bunk_readings (V2: 17 clients — daily bunk score observations)
--- origin: 'cfr' = row mirrored from CFR by cfr-sync OR bulk-loaded by this
--- migration tool (both are CFR-sourced and may be refreshed by the live sync);
--- NULL = entered in LSJ-HUB after go-live (never touched by the sync). Migrated
--- rows are tagged 'cfr' via the Bunk_Readings mapping's staticColumns so the
--- LSJ-HUB cfr-sync owns them rather than the initFarmDb backfill heuristic
--- having to guess from which hub-only fields happen to be populated.
-CREATE TABLE IF NOT EXISTS feed.bunk_readings (
-  id                 SERIAL PRIMARY KEY,
-  pen_number_id      INTEGER,
-  observation_date   DATE NOT NULL,
-  ration_code        SMALLINT,
-  bunk_code          SMALLINT,
-  employee_initials  TEXT,
-  time_checked       TEXT,
-  trough_weight      NUMERIC(10,2),
-  pen_name           TEXT,
-  origin             TEXT,
-  created_at         TIMESTAMPTZ DEFAULT NOW(),
-  updated_at         TIMESTAMPTZ
-);
-
-CREATE TABLE IF NOT EXISTS feed.bunk_call_settings (
-  id                       SERIAL PRIMARY KEY,
-  threshold_under_kg       NUMERIC(8,2),
-  threshold_slick_kg       NUMERIC(8,2),
-  threshold_dry_kg         NUMERIC(8,2),
-  head_count_source        TEXT,
-  variation_tolerance_pct  NUMERIC(6,2),
-  default_session          TEXT,
-  rounding_kg              NUMERIC(8,2),
-  default_mmef             NUMERIC(8,4),
-  use_bunk_scoring         BOOLEAN,
-  show_window_7d           BOOLEAN,
-  show_window_14d          BOOLEAN,
-  show_window_30d          BOOLEAN,
-  threshold_unit           TEXT,
-  show_row_tabs            BOOLEAN,
-  -- LSJH-275 (CFR D14): per-customer configurable bunk-rating scale. CFR sites
-  -- run different contiguous ranges — the default AU 1..5 (1 slick … 5 off-feed)
-  -- or an RV/Roughage-Value style −1..3. Drives the score buttons + suggestion
-  -- engine on the client and the Bunk_Reading clamp on the CFR dual-write.
-  bunk_scale_min           SMALLINT NOT NULL DEFAULT 1,
-  bunk_scale_max           SMALLINT NOT NULL DEFAULT 5
-    CHECK (bunk_scale_max > bunk_scale_min),
-  -- LSJH-275 (CFR D14): structured per-customer behaviour-flag store. CFR's frmRego
-  -- carried ~40 per-site boolean toggles; the ones already modelled live in typed
-  -- columns (titration on feed_order_settings, plateau per-pen, etc). The rest are
-  -- kept here as a flat JSON object so a new per-customer toggle is a write, not a
-  -- migration. Validated key-by-key at the Zod boundary against a known allow-list.
-  behaviour_flags          JSONB NOT NULL DEFAULT '{}'::jsonb,
-  updated_at               TIMESTAMPTZ,
-  updated_by               INTEGER
-);
-INSERT INTO feed.bunk_call_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
-
--- feeding_details (V2: 17 clients — load-level detail, consolidated from 5 feeding program tables)
-CREATE TABLE IF NOT EXISTS feed.feeding_details (
-  id              SERIAL PRIMARY KEY,
-  variant         TEXT NOT NULL DEFAULT 'standard',  -- GE150, L150, Plateau, ShortFeed, WAGYU
-  feed_date       DATE NOT NULL,
-  pen_name        TEXT,
-  pen_number_id   INTEGER,
-  ration_code     SMALLINT,
-  load_number     SMALLINT,
-  truck_id        TEXT,
-  planned_kg      NUMERIC(10,2),
-  actual_kg       NUMERIC(10,2),
-  driver_initials TEXT,
-  load_weight     NUMERIC(10,2),
-  feed_weight     NUMERIC(10,2),
-  start_load_weight NUMERIC(10,2),
-  gross_load_weight NUMERIC(10,2),
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ
-);
-
--- feeding_regimens (V2: 17 clients — high-level feeding plan, consolidated from 5 feeding program tables)
-CREATE TABLE IF NOT EXISTS feed.feeding_regimens (
-  id            SERIAL PRIMARY KEY,
-  variant       TEXT NOT NULL DEFAULT 'standard',  -- GE150, L150, Plateau, ShortFeed, WAGYU
-  pen_number_id INTEGER,
-  ration_code   SMALLINT,
-  date_from     DATE,
-  date_to       DATE,
-  kgs_per_head  NUMERIC(10,2),
-  remarks       TEXT,
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ
-);
-
--- ── Wave-6 mirror (LSJH-491/456/465) — virtual rations, named titration regimes,
--- plateau/step-up feeding regimes. Mirrored from canonical server/db/schema-farm-v6.sql.
--- (feed.rations.is_liquid_pot + pen.pens.titration_regime_id columns are added in the
---  ALTER-column section below; pens FK in the tail constraint DO-block.)
-
--- LSJH-491 (CFR D17) — liquid-pot virtual rations. A virtual ration coded F~nnn is
--- NOT fed as a single line: at feed-out / Digistar send it EXPLODES into its liquid
--- component commodities at fixed ratios. feed.rations.is_liquid_pot flags such a ration.
-CREATE TABLE IF NOT EXISTS feed.virtual_ration_components (
-  id                       SERIAL PRIMARY KEY,
-  virtual_ration_code      SMALLINT NOT NULL REFERENCES feed.rations(ration_code) ON DELETE CASCADE,
-  component_commodity_code SMALLINT NOT NULL,
-  component_commodity_name TEXT,
-  ratio_pcnt               NUMERIC(7,4) NOT NULL CHECK (ratio_pcnt > 0 AND ratio_pcnt <= 100),
-  loading_seq              SMALLINT,
-  created_at               TIMESTAMPTZ DEFAULT NOW(),
-  updated_at               TIMESTAMPTZ,
-  UNIQUE (virtual_ration_code, component_commodity_code)
-);
-CREATE INDEX IF NOT EXISTS idx_virtual_ration_components_code
-  ON feed.virtual_ration_components (virtual_ration_code);
-COMMENT ON TABLE feed.virtual_ration_components IS
-  'LSJH-491 (CFR D17): maps a liquid-pot virtual ration (feed.rations.is_liquid_pot=TRUE) to its component commodities + ratios, used to EXPLODE an F~nnn line into its liquid components at feed-out / Digistar export. PG is authoritative.';
-
--- LSJH-456 — reusable named titration templates (header + ordered day-bands), distinct
--- from the per-pen feed.titration_ration_regimes scheme. Assigned to a pen via
--- pen.pens.titration_regime_id.
+-- ── Named titration regimes (LSJH-456 / CFR D15 frmTitrationRegimes) ──────────
+-- A REUSABLE NAMED template (header + ordered day-bands), distinct from the
+-- per-pen single-ration feed.titration_ration_regimes scheme above. Each band
+-- covers a day-range (day_from..day_to) and specifies up to 4 rations with %s
+-- that must total 100, plus an ADG pushback rule (adg_target + adg_pushback_days)
+-- that shifts the schedule when growth differs from target. A named regime is
+-- assigned to a pen via pen.pens.titration_regime_id.
 CREATE TABLE IF NOT EXISTS feed.titration_regimes (
   id                  SERIAL PRIMARY KEY,
   name                TEXT NOT NULL UNIQUE,
@@ -1512,16 +1504,150 @@ CREATE INDEX IF NOT EXISTS idx_titration_regime_bands_regime
 COMMENT ON TABLE feed.titration_regime_bands IS
   'Ordered day-bands for a named titration regime (LSJH-456): up to 4 rations (%s sum to 100) + ADG pushback per band.';
 
--- ── Plateau / step-up feeding regimes (LSJH-465, CFR D15) — AUTHORING surface for the
--- consumption-band feeding regimens that the plateau feed-adjust math reads. CFR's 5
--- cohort family table-pairs collapse into two PG tables discriminated by feed_type (1..5).
+-- bunk_code_desc (V2: 17 clients — bunk score descriptions)
+CREATE TABLE IF NOT EXISTS feed.bunk_code_desc (
+  id          SERIAL PRIMARY KEY,
+  code        SMALLINT NOT NULL,
+  description TEXT,
+  ration_type SMALLINT REFERENCES feed.ration_types(ration_type_id),
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ
+);
+
+-- bunk_readings (V2: 17 clients — daily bunk score observations)
+-- origin: 'cfr' = row mirrored from CFR Bunk_Readings by cfr-sync (replaced on
+-- every sync); NULL = entered in LSJ-HUB (never touched by the sync). Existing
+-- farm DBs get this column + backfill via the idempotent DO block in
+-- server/db/index.js (initFarmDb) — deliberately NOT in the ADD COLUMN section
+-- below, because the schema applies before that DO block and the column's
+-- absence is the backfill marker.
+CREATE TABLE IF NOT EXISTS feed.bunk_readings (
+  id                 SERIAL PRIMARY KEY,
+  pen_number_id      INTEGER,
+  observation_date   DATE NOT NULL,
+  ration_code        SMALLINT,
+  bunk_code          SMALLINT,
+  employee_initials  TEXT,
+  time_checked       TEXT,
+  trough_weight      NUMERIC(10,2),
+  pen_name           TEXT,
+  origin             TEXT,
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS feed.bunk_call_settings (
+  id                       SERIAL PRIMARY KEY,
+  threshold_under_kg       NUMERIC(8,2),
+  threshold_slick_kg       NUMERIC(8,2),
+  threshold_dry_kg         NUMERIC(8,2),
+  head_count_source        TEXT,
+  variation_tolerance_pct  NUMERIC(6,2),
+  default_session          TEXT,
+  rounding_kg              NUMERIC(8,2),
+  default_mmef             NUMERIC(8,4),
+  use_bunk_scoring         BOOLEAN,
+  show_window_7d           BOOLEAN,
+  show_window_14d          BOOLEAN,
+  show_window_30d          BOOLEAN,
+  threshold_unit           TEXT,
+  show_row_tabs            BOOLEAN,
+  session_label_style      TEXT NOT NULL DEFAULT 'time'
+    CHECK (session_label_style IN ('time', 'ordinal')),
+  sessions_per_day         SMALLINT NOT NULL DEFAULT 3
+    CHECK (sessions_per_day BETWEEN 1 AND 3),
+  -- Auto-adopt CFR bunk ratings into LSJ calls on page load (LSJH-407). When
+  -- FALSE the rider loads them manually via the "Load CFR ratings" banner.
+  cfr_auto_adopt           BOOLEAN NOT NULL DEFAULT TRUE,
+  -- LSJH-275 (CFR D14): per-customer configurable bunk-rating scale. CFR sites
+  -- run different contiguous ranges — the default AU 1..5 (1 slick … 5 off-feed)
+  -- or an RV/Roughage-Value style −1..3. Drives the score buttons + suggestion
+  -- engine on the client and the Bunk_Reading clamp on the CFR dual-write.
+  bunk_scale_min           SMALLINT NOT NULL DEFAULT 1,
+  bunk_scale_max           SMALLINT NOT NULL DEFAULT 5
+    CHECK (bunk_scale_max > bunk_scale_min),
+  -- LSJH-275 (CFR D14): structured per-customer behaviour-flag store. CFR's frmRego
+  -- carried ~40 per-site boolean toggles; the ones already modelled live in typed
+  -- columns (titration on feed_order_settings, plateau per-pen, etc). The rest are
+  -- kept here as a flat JSON object so a new per-customer toggle is a write, not a
+  -- migration. Validated key-by-key at the Zod boundary against a known allow-list.
+  behaviour_flags          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at               TIMESTAMPTZ,
+  updated_by               INTEGER
+);
+INSERT INTO feed.bunk_call_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- feed_order_settings (LSJH-271/272 — singleton per farm)
+-- Replaces the CFR ~40 per-customer boolean flags relevant to the daily mill workflow.
+CREATE TABLE IF NOT EXISTS feed.feed_order_settings (
+  id                          SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  round_nearest_kg            SMALLINT NOT NULL DEFAULT 1 CHECK (round_nearest_kg IN (1, 5)),
+  default_min_feed_export_kg  INTEGER NOT NULL DEFAULT 0,
+  use_titration_feeding       BOOLEAN NOT NULL DEFAULT FALSE,
+  digistar_outbound_mode      TEXT NOT NULL DEFAULT 'csv'
+    CHECK (digistar_outbound_mode IN ('csv', 'api', 'both', 'off')),
+  pen_route_table             TEXT NOT NULL DEFAULT 'penlaneorder'
+    CHECK (pen_route_table IN ('penlaneorder', 'bunk_route')),
+  updated_at                  TIMESTAMPTZ,
+  updated_by                  INTEGER
+);
+INSERT INTO feed.feed_order_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- feeding_details (V2: 17 clients — load-level detail, consolidated from 5 feeding program tables)
+CREATE TABLE IF NOT EXISTS feed.feeding_details (
+  id              SERIAL PRIMARY KEY,
+  variant         TEXT NOT NULL DEFAULT 'standard',  -- GE150, L150, Plateau, ShortFeed, WAGYU
+  feed_date       DATE NOT NULL,
+  pen_name        TEXT,
+  pen_number_id   INTEGER,
+  ration_code     SMALLINT,
+  load_number     SMALLINT,
+  truck_id        TEXT,
+  planned_kg      NUMERIC(10,2),
+  actual_kg       NUMERIC(10,2),
+  driver_initials TEXT,
+  load_weight     NUMERIC(10,2),
+  feed_weight     NUMERIC(10,2),
+  start_load_weight NUMERIC(10,2),
+  gross_load_weight NUMERIC(10,2),
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ
+);
+
+-- feeding_regimens (V2: 17 clients — high-level feeding plan, consolidated from 5 feeding program tables)
+CREATE TABLE IF NOT EXISTS feed.feeding_regimens (
+  id            SERIAL PRIMARY KEY,
+  variant       TEXT NOT NULL DEFAULT 'standard',  -- GE150, L150, Plateau, ShortFeed, WAGYU
+  pen_number_id INTEGER,
+  ration_code   SMALLINT,
+  date_from     DATE,
+  date_to       DATE,
+  kgs_per_head  NUMERIC(10,2),
+  remarks       TEXT,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ
+);
+
+-- ── Plateau / step-up feeding regimes (LSJH-465, CFR D15) ──────────────
+-- AUTHORING surface for the consumption-band feeding regimens that the plateau
+-- feed-adjust MATH (LSJH-478, lib/cfr-writeback.calculatePlateauKgsHead) reads
+-- from CFR's 5 cohort table-pairs (keyed by Pens_File.Feeding_System byte):
+--   1 ShortFeed · 2 Plateau · 3 L150 · 4 GE150 · 5 WAGYU
+-- CFR has one *_Feeding_Regimens header table + one *_Feeding_Details body table
+-- per family. We collapse all five families into two PG tables discriminated by
+-- feed_type (1..5) so a new family is data, not a migration. The CFR mirror maps
+-- feed_type → the right *_Feeding_Regimens/*_Feeding_Details pair on write-back.
+--
+-- Header: a consumption band (kgs/head from..to) → how many days of bunk codes
+-- to accumulate before a plateau step is allowed (Accum_BunkCode_days).
 CREATE TABLE IF NOT EXISTS feed.plateau_regimes (
   id                     SERIAL PRIMARY KEY,
-  feed_type              SMALLINT NOT NULL,
-  ration_type            SMALLINT NOT NULL,
-  consump_per_head_from  NUMERIC(10,2) NOT NULL,
-  consump_per_head_to    NUMERIC(10,2) NOT NULL,
-  accum_bunkcode_days    SMALLINT NOT NULL,
+  feed_type              SMALLINT NOT NULL,             -- 1..5 (CFR Feeding_System family)
+  ration_type            SMALLINT NOT NULL,             -- CFR Ration_Type
+  consump_per_head_from  NUMERIC(10,2) NOT NULL,        -- band lower bound (kgs/head)
+  consump_per_head_to    NUMERIC(10,2) NOT NULL,        -- band upper bound (kgs/head)
+  accum_bunkcode_days    SMALLINT NOT NULL,             -- N: accumulate/lockout window
   active                 BOOLEAN NOT NULL DEFAULT TRUE,
   remarks                TEXT,
   created_at             TIMESTAMPTZ DEFAULT NOW(),
@@ -1533,12 +1659,14 @@ CREATE TABLE IF NOT EXISTS feed.plateau_regimes (
     UNIQUE (feed_type, ration_type, consump_per_head_from, consump_per_head_to)
 );
 
+-- Detail: accumulated bunk-code total → kgs/head adjustment delta. Mirrors the
+-- *_Feeding_Details lookup (Feeding_Regimen_ID + Bunk_Codes_Total → Kgs_Head_Adj).
 CREATE TABLE IF NOT EXISTS feed.plateau_regime_steps (
   id                  SERIAL PRIMARY KEY,
   plateau_regime_id   INTEGER NOT NULL
                         REFERENCES feed.plateau_regimes(id) ON DELETE CASCADE,
-  bunk_codes_total    SMALLINT NOT NULL,
-  kgs_head_adj        NUMERIC(10,2) NOT NULL,
+  bunk_codes_total    SMALLINT NOT NULL,                -- accumulated bunk-code total
+  kgs_head_adj        NUMERIC(10,2) NOT NULL,           -- adjustment delta
   created_at          TIMESTAMPTZ DEFAULT NOW(),
   updated_at          TIMESTAMPTZ,
   CONSTRAINT plateau_regime_steps_total_uq
@@ -1664,6 +1792,86 @@ CREATE TABLE IF NOT EXISTS feed.pen_feeding_order_data (
   updated_at       TIMESTAMPTZ,
   UNIQUE(param_ration_type, slot)
 );
+
+-- feeding_order_for_day (LSJH-272 — CFR frmManualFeedOrderTable)
+-- Per-ration-type config consumed by the Create_Loads engine.
+-- The 4 cycle %s must total 100 (enforced by CHECK below).
+CREATE TABLE IF NOT EXISTS feed.feeding_order_for_day (
+  ration_type                     SMALLINT PRIMARY KEY REFERENCES feed.ration_types(ration_type_id),
+  feeding_order                   SMALLINT NOT NULL CHECK (feeding_order BETWEEN 1 AND 99),
+  feed_pcnt_cycle_1               NUMERIC(5,2) NOT NULL DEFAULT 0,
+  feed_pcnt_cycle_2               NUMERIC(5,2) NOT NULL DEFAULT 0,
+  feed_pcnt_cycle_3               NUMERIC(5,2) NOT NULL DEFAULT 0,
+  feed_pcnt_cycle_4               NUMERIC(5,2) NOT NULL DEFAULT 0,
+  truck_volume_m3                 NUMERIC(6,3),
+  truck_max_load_kgs              INTEGER,
+  minimum_load_allowed            INTEGER NOT NULL DEFAULT 0,
+  force_one_load_if_under_kilos   INTEGER NOT NULL DEFAULT 0,
+  force_one_load_if_under_head    INTEGER NOT NULL DEFAULT 0,
+  truck_name                      TEXT NOT NULL,
+  created_at                      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at                      TIMESTAMPTZ
+);
+
+-- pen_feeds_temp (LSJH-271 — CFR Pen_Feeds_Temp manager list)
+-- Generated by Create_Loads; one row per pen per Create_Loads invocation (run_id).
+-- PARTITIONed by feed_date for the same reason penfeedsdata is.
+CREATE TABLE IF NOT EXISTS feed.pen_feeds_temp (
+  id              SERIAL NOT NULL,
+  feed_date       DATE NOT NULL,
+  run_id          UUID NOT NULL,
+  pen_number_id   INTEGER NOT NULL,
+  pen_name        TEXT NOT NULL,
+  mob_name        TEXT,
+  ration_code     SMALLINT NOT NULL,
+  ration_name     TEXT,
+  ration_type     SMALLINT,
+  kgs_head        NUMERIC(8,3),
+  bunk_code       SMALLINT,
+  numb_head       INTEGER,
+  five_day_adi    NUMERIC(8,3),
+  pm_ration_name  TEXT,
+  feed1_kg        INTEGER,
+  feed2_kg        INTEGER,
+  feed3_kg        INTEGER,
+  feed4_kg        INTEGER,
+  feed1_order     SMALLINT,
+  feed2_order     SMALLINT,
+  feed3_order     SMALLINT,
+  feed4_order     SMALLINT,
+  forced_one_feed BOOLEAN DEFAULT FALSE,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (id, feed_date)
+) PARTITION BY RANGE (feed_date);
+
+-- pen_feeds_temp_cycles (LSJH-271 — CFR Pen_Feeds_Temp_Cycles driver list)
+-- One row per pen per non-zero cycle, sorted by pen_name_routed
+-- (zero-padded pen.penlaneorder.laneorder prefix on pen_name).
+CREATE TABLE IF NOT EXISTS feed.pen_feeds_temp_cycles (
+  id               SERIAL NOT NULL,
+  feed_date        DATE NOT NULL,
+  run_id           UUID NOT NULL,
+  pen_number_id    INTEGER NOT NULL,
+  pen_name_routed  TEXT NOT NULL,
+  ration_code      SMALLINT NOT NULL,
+  ration_name      TEXT,
+  ration_type      SMALLINT,
+  cycle_no         SMALLINT NOT NULL CHECK (cycle_no BETWEEN 1 AND 4),
+  numb_head        INTEGER,
+  kgs_to_feed      INTEGER NOT NULL,
+  feed_order       SMALLINT,
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (id, feed_date)
+) PARTITION BY RANGE (feed_date);
+
+CREATE INDEX IF NOT EXISTS idx_pen_feeds_temp_run        ON feed.pen_feeds_temp (run_id, feed_date);
+CREATE INDEX IF NOT EXISTS idx_pen_feeds_temp_cycles_run ON feed.pen_feeds_temp_cycles (run_id, feed_date);
+
+-- LSJH-271: load_number stamped onto each driver-list row by the truck-packing
+-- step. NULL until the cycle has been assigned to a load. truck_name + ration_type
+-- + load_number is the natural key of a feed-card (consumed by Digistar send).
+ALTER TABLE feed.pen_feeds_temp_cycles ADD COLUMN IF NOT EXISTS load_number SMALLINT NULL;
+ALTER TABLE feed.pen_feeds_temp_cycles ADD COLUMN IF NOT EXISTS truck_name TEXT NULL;
 
 -- pen_and_bunk_cleaning (V2: 17 clients)
 CREATE TABLE IF NOT EXISTS feed.pen_and_bunk_cleaning (
@@ -1826,6 +2034,23 @@ CREATE TABLE IF NOT EXISTS feed.cattle_feed_updates (
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Reusable ration transition step plans (added via migration 010, LSJH-160).
+-- Steps stored as JSONB array: [{day_offset:int, ration_id:int, note?:text}]
+-- ordered ascending by day_offset; first step always has day_offset=0.
+CREATE TABLE IF NOT EXISTS feed.ration_transition_programs (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT,
+    steps       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by  TEXT,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (jsonb_typeof(steps) = 'array')
+);
+COMMENT ON TABLE feed.ration_transition_programs IS
+  'Reusable transition step plans. Steps = [{day_offset, ration_id, note?}], asc by day_offset.';
+
 
 -- ████████████████████████████████████████████████████████████████
 -- ██  PEN MANAGEMENT
@@ -1865,8 +2090,10 @@ CREATE TABLE IF NOT EXISTS pen.pens (
   expected_wg_day               NUMERIC(10,2),
   -- Cleaning / titration
   date_last_cleaned             DATE,
+  cleaning_interval_days        SMALLINT,  -- LSJH-310: per-pen Days_between_cleaning (overdue threshold)
   titration_regime              TEXT,
   titration_regime_start_date   DATE,
+  titration_regime_id           INTEGER,  -- LSJH-456: assigned named titration regime (FK feed.titration_regimes added in tail DO-block)
   date_entered_feedlot          DATE,
   -- Display / list config
   active                        BOOLEAN DEFAULT TRUE,
@@ -1881,32 +2108,6 @@ CREATE TABLE IF NOT EXISTS pen.pens (
 );
 CREATE INDEX IF NOT EXISTS idx_pens_name ON pen.pens(name);
 CREATE INDEX IF NOT EXISTS idx_pens_ration ON pen.pens(ration_id);
-
--- bunk_route — per-session pen visiting order
-CREATE TABLE IF NOT EXISTS pen.bunk_route (
-    session_type TEXT    NOT NULL CHECK (session_type IN ('AM','Midday','PM')),
-    pen_id       INTEGER NOT NULL REFERENCES pen.pens(id) ON DELETE CASCADE,
-    position     INTEGER NOT NULL,
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_by   TEXT    NULL,
-    PRIMARY KEY (session_type, pen_id)
-);
-CREATE INDEX IF NOT EXISTS idx_bunk_route_session_pos
-    ON pen.bunk_route (session_type, position);
-
--- pen_ration_history — audit log of ration assignments per pen
-CREATE TABLE IF NOT EXISTS pen.pen_ration_history (
-    id             SERIAL PRIMARY KEY,
-    pen_id         INTEGER NOT NULL REFERENCES pen.pens(id) ON DELETE CASCADE,
-    ration_id      INTEGER REFERENCES feed.rations(id) ON DELETE SET NULL,
-    effective_from DATE NOT NULL,
-    effective_to   DATE,
-    changed_by     TEXT,
-    changed_at     TIMESTAMPTZ DEFAULT NOW(),
-    source         TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_pen_ration_history_pen
-    ON pen.pen_ration_history (pen_id, effective_from);
 
 -- penshistory (V2: 17 clients — pen movement history)
 CREATE TABLE IF NOT EXISTS pen.penshistory (
@@ -2018,6 +2219,66 @@ CREATE TABLE IF NOT EXISTS pen.log_pens_file (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- bunk_route (migration 009) — per-session pen visiting order
+CREATE TABLE IF NOT EXISTS pen.bunk_route (
+    session_type TEXT    NOT NULL CHECK (session_type IN ('AM','Midday','PM')),
+    pen_id       INTEGER NOT NULL REFERENCES pen.pens(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by   TEXT    NULL,
+    PRIMARY KEY (session_type, pen_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bunk_route_session_pos
+    ON pen.bunk_route (session_type, position);
+
+-- pen_ration_history — audit log of ration assignments per pen
+CREATE TABLE IF NOT EXISTS pen.pen_ration_history (
+    id             SERIAL PRIMARY KEY,
+    pen_id         INTEGER NOT NULL REFERENCES pen.pens(id) ON DELETE CASCADE,
+    ration_id      INTEGER REFERENCES feed.rations(id) ON DELETE SET NULL,
+    effective_from DATE NOT NULL,
+    effective_to   DATE,
+    changed_by     TEXT,
+    changed_at     TIMESTAMPTZ DEFAULT NOW(),
+    source         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pen_ration_history_pen
+    ON pen.pen_ration_history (pen_id, effective_from);
+
+-- Per-pen enrolment in a ration transition program (added via migration 010,
+-- LSJH-160 adds status/approval columns).
+-- Status flow: pending → active → complete | cancelled.
+-- A pen may have at most one non-cancelled assignment at a time (enforced by
+-- the partial unique index below).
+CREATE TABLE IF NOT EXISTS pen.pen_transition_assignments (
+    id           SERIAL PRIMARY KEY,
+    pen_id       INTEGER NOT NULL REFERENCES pen.pens(id) ON DELETE CASCADE,
+    program_id   INTEGER NOT NULL REFERENCES feed.ration_transition_programs(id) ON DELETE RESTRICT,
+    started_on   DATE NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending','active','complete','cancelled')),
+    -- approved_by references the system DB's `users` table — cross-DB FKs are
+    -- not supported by Postgres, so we store the ID without a constraint.
+    approved_by  INTEGER,
+    approved_at  TIMESTAMPTZ,
+    -- Manager rejection note (LSJH-174). Set on reject; the assignment stays
+    -- 'pending' so it can be revised/cancelled. Cleared on approve.
+    rejection_reason TEXT,
+    notes        TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by   TEXT,
+    completed_at TIMESTAMPTZ
+);
+COMMENT ON TABLE pen.pen_transition_assignments IS
+  'Per-pen enrolment in a transition program. Status flow: pending → active → complete/cancelled.';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pen_transition_active
+  ON pen.pen_transition_assignments(pen_id)
+  WHERE status NOT IN ('cancelled','complete');
+
+CREATE INDEX IF NOT EXISTS idx_pen_transition_pen
+  ON pen.pen_transition_assignments(pen_id);
+
 
 -- ████████████████████████████████████████████████████████████████
 -- ██  FINANCE & COSTS
@@ -2062,11 +2323,18 @@ CREATE TABLE IF NOT EXISTS finance.costs (
   ear_tag       TEXT,
   applied       BOOLEAN DEFAULT FALSE,
   purch_lot_no  TEXT,
+  -- LSJH-413: links overhead cost rows to their overhead_application_history batch
+  -- so the undo is a real reversal (delete-by-batch) instead of a 24h heuristic.
+  overhead_history_id INTEGER,
+  -- LSJH-512 (CFR D12): Oracle ERP export Sent flag (Costings_for_oracle extract).
+  sent_to_oracle      BOOLEAN,
+  sent_to_oracle_date TIMESTAMPTZ,
   legacy_modified_at TIMESTAMPTZ,
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   updated_at    TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_costs_cow ON finance.costs(cow_id);
+CREATE INDEX IF NOT EXISTS idx_costs_overhead_history ON finance.costs(overhead_history_id);
 CREATE INDEX IF NOT EXISTS idx_costs_beast ON finance.costs(beast_id);
 CREATE INDEX IF NOT EXISTS idx_costs_date ON finance.costs(trans_date);
 CREATE INDEX IF NOT EXISTS idx_costs_code ON finance.costs(revexp_code);
@@ -2414,6 +2682,7 @@ CREATE TABLE IF NOT EXISTS carcase.carcase_grades (
   max_weight    NUMERIC(10,2),
   min_fat       NUMERIC(5,2),
   max_fat       NUMERIC(5,2),
+  active        BOOLEAN NOT NULL DEFAULT TRUE,
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   updated_at    TIMESTAMPTZ
 );
@@ -2646,6 +2915,17 @@ CREATE TABLE IF NOT EXISTS purchasing.purchase_totals (
   updated_at         TIMESTAMPTZ
 );
 
+-- purchase_regions (LSJH-206 — CFR Purchase_Regions lookup; region code → name
+-- behind purchasing.purchase_lots.purchase_region). Reference-CRUD master.
+CREATE TABLE IF NOT EXISTS purchasing.purchase_regions (
+  id           SERIAL PRIMARY KEY,
+  region_code  SMALLINT UNIQUE,
+  region_name  TEXT NOT NULL,
+  active       BOOLEAN DEFAULT TRUE,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ
+);
+
 
 -- ████████████████████████████████████████████████████████████████
 -- ██  COMMODITY
@@ -2705,6 +2985,10 @@ CREATE TABLE IF NOT EXISTS commodity.commodtrans (
   docket_no        TEXT,
   supplier_id      INTEGER,
   notes            TEXT,
+  -- LSJH-512 (CFR D12): Oracle ERP export Sent flag (set when this movement is
+  -- finalised into an oracle_export_batches batch; prevents double-send on re-run).
+  sent_to_oracle      BOOLEAN,
+  sent_to_oracle_date TIMESTAMPTZ,
   legacy_modified_at TIMESTAMPTZ,
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ,
@@ -2722,8 +3006,8 @@ CREATE TABLE IF NOT EXISTS commodity.period_stocks_closing_balance (
   updated_at      TIMESTAMPTZ
 );
 
+
 -- reason_codes (LSJH-283: CFR Reason_List — commodity-transaction adjustment reasons)
--- Mirrors main repo server/db/schema-farm-v6.sql. ETL: dbo.Reason_List → commodity.reason_codes.
 CREATE TABLE IF NOT EXISTS commodity.reason_codes (
   id                 SERIAL PRIMARY KEY,
   reason_id          SMALLINT NOT NULL UNIQUE,
@@ -2733,9 +3017,8 @@ CREATE TABLE IF NOT EXISTS commodity.reason_codes (
 );
 
 -- transaction_types (LSJH-280: CFR Transaction_Types — commodtrans.trans_type lookup).
--- NOTE this is the COMMODITY lookup, distinct from system.transaction_types.
--- ETL: dbo.Transaction_Types → commodity.transaction_types. Seeds 1-4 are proven from
--- CFR source; verify trans_type=2 (Adjustment) against a live CFR DB.
+-- Seeds 1-4 are proven from CFR source; site-specific rows are pulled from a live CFR DB.
+-- NOTE: verify trans_type=2 is the adjustment type (not a Sale variant) against a live CFR DB.
 CREATE TABLE IF NOT EXISTS commodity.transaction_types (
   id               SERIAL PRIMARY KEY,
   trans_type_id    SMALLINT NOT NULL UNIQUE,
@@ -2751,6 +3034,50 @@ VALUES (1, 'P', 'Purchase / Receipt', '+'),
        (3, 'S', 'Sale',               '-'),
        (4, '',  'Feed-out',           '-')
 ON CONFLICT (trans_type_id) DO NOTHING;
+
+
+-- ── Oracle ERP export (LSJH-512 / CFR D12 frmOracleData) ────────────────
+-- Bespoke Oracle inventory-transaction export: commodity movements + costs are
+-- emitted as Oracle-format records (Misc Receipt / Misc Issue / Subinventory
+-- Transfer) plus a Costings_for_oracle extract and Location_Changes feed, gated
+-- behind a Finalise/Sent flag so a batch is exported once and never re-sent.
+--   oracle_export_batches — one row per finalised/sent batch (the Finalise flag).
+--   oracle_export_lines   — the emitted Oracle records; UNIQUE(source_table,
+--                           source_id) is the dedup anchor: a source movement /
+--                           cost row can be exported into at most one batch, so a
+--                           re-run never double-sends.
+CREATE TABLE IF NOT EXISTS finance.oracle_export_batches (
+  id            SERIAL PRIMARY KEY,
+  batch_ref     TEXT NOT NULL UNIQUE,           -- idempotent batch key
+  period_from   DATE,
+  period_to     DATE,
+  status        TEXT NOT NULL DEFAULT 'finalised'
+                  CHECK (status IN ('finalised', 'sent')),
+  line_count    INTEGER NOT NULL DEFAULT 0,
+  total_value   NUMERIC(14,4) NOT NULL DEFAULT 0,
+  created_by    INTEGER,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  sent_at       TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS finance.oracle_export_lines (
+  id              SERIAL PRIMARY KEY,
+  batch_id        INTEGER NOT NULL REFERENCES finance.oracle_export_batches(id) ON DELETE CASCADE,
+  source_table    TEXT NOT NULL,                -- 'commodtrans' | 'costs' | 'location_changes'
+  source_id       INTEGER NOT NULL,
+  oracle_txn_type TEXT NOT NULL,                -- 'Misc Receipt' | 'Misc Issue' | 'Subinventory Transfer' | 'Costing'
+  trans_date      DATE,
+  commodity_code  SMALLINT,
+  item_ref        TEXT,                         -- commodity / cost code / movement ref
+  from_location   TEXT,
+  to_location     TEXT,
+  quantity        NUMERIC(14,4),
+  unit_cost       NUMERIC(14,4),
+  total_value     NUMERIC(14,4),
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (source_table, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_oracle_lines_batch ON finance.oracle_export_lines(batch_id);
 
 
 -- ████████████████████████████████████████████████████████████████
@@ -2938,8 +3265,34 @@ CREATE TABLE IF NOT EXISTS transport.manure_carting (
   updated_at       TIMESTAMPTZ
 );
 
+-- manure_types (LSJH-312: CFR Manure_Types lookup, edited via frmManureTypes)
+CREATE TABLE IF NOT EXISTS transport.manure_types (
+  id           SERIAL PRIMARY KEY,
+  manure_type  TEXT NOT NULL,
+  active       BOOLEAN DEFAULT TRUE,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ
+);
+
+-- carrier_rates (LSJH-222: CFR transport rates / carrier rate-card). Reference
+-- CRUD: carrier × route × vehicle-type → per-km / per-load / min-charge rates.
+CREATE TABLE IF NOT EXISTS transport.carrier_rates (
+  id             SERIAL PRIMARY KEY,
+  carrier_name   TEXT NOT NULL,
+  vehicle_type   TEXT,
+  origin         TEXT,
+  destination    TEXT,
+  rate_per_km    NUMERIC(10,4),
+  rate_per_load  NUMERIC(12,2),
+  min_charge     NUMERIC(12,2),
+  active         BOOLEAN DEFAULT TRUE,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ
+);
+
 -- trucking_dates (LSJH-221: CFR D07 frmTruckingDates — planned trucking / kill
--- planner). A focused schedule of planned dispatch/kill dates.
+-- planner). A focused schedule of planned dispatch/kill dates: when, to which
+-- abattoir/destination, which lot/pen, how many head, and a workflow status.
 CREATE TABLE IF NOT EXISTS transport.trucking_dates (
   id              SERIAL PRIMARY KEY,
   planned_date    DATE NOT NULL,
@@ -3020,6 +3373,7 @@ CREATE TABLE IF NOT EXISTS contacts.contacts (
   id              SERIAL PRIMARY KEY,          -- OG PK
   contact_id      INTEGER UNIQUE,              -- V2 PK (kept for ETL)
   -- OG web-app columns
+  -- LSJH-505 — [CFR D11] enum extended with 'agistor' + 'customer-feeder'.
   type            TEXT CHECK(type IN ('vendor','agent','buyer','abattoir','carrier','agistor','customer-feeder','other')),
   company         TEXT,
   title           TEXT,
@@ -3214,6 +3568,20 @@ CREATE TABLE IF NOT EXISTS weighing.livestock_weighbridge_dockets (
   notes               TEXT,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- weighing_sessions (OG — open/closed weighing sessions per pen)
+CREATE TABLE IF NOT EXISTS weighing.weighing_sessions (
+  id           SERIAL PRIMARY KEY,
+  session_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  pen_id       INTEGER REFERENCES pen.pens(id) ON DELETE SET NULL,
+  operator     TEXT,
+  notes        TEXT,
+  status       TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_weighing_sessions_status       ON weighing.weighing_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_weighing_sessions_session_date ON weighing.weighing_sessions(session_date DESC);
 
 
 -- ████████████████████████████████████████████████████████████████
@@ -3431,7 +3799,10 @@ CREATE TABLE IF NOT EXISTS operations.bunk_call_entries (
   bunk_code       TEXT NULL CHECK (bunk_code IS NULL OR bunk_code IN ('U','S','D')),
   variation_pct   NUMERIC(5,2) NULL,
   alloc_kg        NUMERIC(10,2) NULL,
-  other_notes     TEXT NULL
+  other_notes     TEXT NULL,
+  -- Provenance: 'rider' = a human scored the pen, 'cfr' = inherited from a CFR
+  -- Bunk_Reading and adopted by the bunk-call screen. NULL is read as 'rider'.
+  origin          TEXT NULL CHECK (origin IS NULL OR origin IN ('rider','cfr'))
 );
 
 -- rfid_scan_sessions (OG web-app)
@@ -3465,6 +3836,10 @@ CREATE TABLE IF NOT EXISTS operations.transport_dispatches (
   driver_name     TEXT,
   status          TEXT DEFAULT 'pending',
   notes           TEXT,
+  -- LSJH-412: commercial sale terms captured at despatch
+  sale_price      NUMERIC(12,2),
+  price_per_kg    NUMERIC(10,4),
+  buyer_id        INTEGER,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -3524,6 +3899,26 @@ CREATE INDEX IF NOT EXISTS idx_wb_dockets_date ON operations.weighbridge_dockets
 CREATE INDEX IF NOT EXISTS idx_wb_dockets_type ON operations.weighbridge_dockets(docket_type);
 CREATE INDEX IF NOT EXISTS idx_wb_dockets_carrier ON operations.weighbridge_dockets(carrier_id);
 
+-- weather_observations — one row per day of farm weather (Overview weather chip).
+-- The 'weather-observations' permission resource predates this table (it was a
+-- phantom resource); this is its first real backing. Per-farm DB, so no farm_id;
+-- UNIQUE(observed_on) makes the daily entry an upsert.
+CREATE TABLE IF NOT EXISTS operations.weather_observations (
+  id           SERIAL PRIMARY KEY,
+  observed_on  DATE NOT NULL UNIQUE,
+  temp_min_c   NUMERIC(4,1),
+  temp_max_c   NUMERIC(4,1),
+  rainfall_mm  NUMERIC(6,1),
+  wind_kmh     NUMERIC(5,1),
+  conditions   TEXT CHECK (conditions IS NULL OR conditions IN
+                 ('sunny','overcast','rain','storm','windy','frost','dusty')),
+  notes        TEXT,
+  recorded_by  TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_weather_obs_date ON operations.weather_observations(observed_on DESC);
+
 -- archives (OG web-app — archive events)
 CREATE TABLE IF NOT EXISTS operations.archives (
   id                      SERIAL PRIMARY KEY,
@@ -3560,7 +3955,21 @@ CREATE TABLE IF NOT EXISTS operations.archiving_log (
   created_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- reconcile_runs (operations — audit log of reconciliation checks)
+CREATE TABLE IF NOT EXISTS operations.reconcile_runs (
+  id              SERIAL PRIMARY KEY,
+  check_type      TEXT NOT NULL,
+  ran_by          TEXT,
+  records_checked INTEGER DEFAULT 0,
+  duplicates      INTEGER DEFAULT 0,
+  mismatches      INTEGER DEFAULT 0,
+  flagged_count   INTEGER DEFAULT 0,
+  ran_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- drafting_settings (OG web-app)
+-- settings JSONB shape: { auto_draft_enabled, fallback_gate (1-7), gates: [...], hardware }
+-- fallback_gate (LSJH-184) is a JSON key, not a column; backfilled in db/index.js.
 CREATE TABLE IF NOT EXISTS operations.drafting_settings (
   id              INTEGER PRIMARY KEY DEFAULT 1,
   settings        JSONB NOT NULL DEFAULT '{}',
@@ -3568,8 +3977,24 @@ CREATE TABLE IF NOT EXISTS operations.drafting_settings (
   updated_at      TIMESTAMPTZ
 );
 
+-- instrument_calibrations (LSJH-80 — simple reference list of farm instruments
+-- and their calibration schedule; used by /api/instrument-calibrations CRUD).
+CREATE TABLE IF NOT EXISTS operations.instrument_calibrations (
+  id              SERIAL PRIMARY KEY,
+  instrument_name TEXT NOT NULL,
+  method          TEXT,
+  last_calibrated DATE,
+  next_due        DATE,
+  notes           TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_instr_calibrations_next_due
+  ON operations.instrument_calibrations(next_due);
+
 -- instruments + instrument_calibration_logs (LSJH-451, CFR D11 —
 -- normalised instrument register + per-test calibration log).
+-- instruments  = the register (one row per piece of equipment).
+-- instrument_calibration_logs = one row per calibration test performed,
+-- FK to instruments. Scheduling/alerts deliberately out of scope.
 CREATE TABLE IF NOT EXISTS operations.instruments (
   id              SERIAL PRIMARY KEY,
   name            TEXT NOT NULL,
@@ -3643,16 +4068,29 @@ CREATE INDEX IF NOT EXISTS idx_dockets_date   ON operations.dockets(docket_date 
 CREATE INDEX IF NOT EXISTS idx_dockets_type   ON operations.dockets(docket_type);
 CREATE INDEX IF NOT EXISTS idx_dockets_status ON operations.dockets(status);
 
--- agent_issues (OG web-app)
+-- agent_issues — findings written by the farm-scan agents (quality/migration).
+-- Shape MUST match server/agents/orchestrator.js ensureAgentTables(): the earlier
+-- issue_type/status/resolved_at shape was stale and shadowed the real table, so
+-- getSummary()/listIssues() 500'd on the missing `resolved` column (the admin
+-- agent-insights dashboard widget). See db/index.js for the drift reconcile.
 CREATE TABLE IF NOT EXISTS operations.agent_issues (
   id              SERIAL PRIMARY KEY,
-  issue_type      TEXT NOT NULL,
-  description     TEXT,
-  severity        TEXT,
-  status          TEXT DEFAULT 'open',
-  resolved_at     TIMESTAMPTZ,
+  run_id          INTEGER NOT NULL,
+  agent_type      TEXT NOT NULL,
+  category        TEXT NOT NULL,
+  severity        TEXT NOT NULL CHECK (severity IN ('critical','high','medium','low','info')),
+  entity_table    TEXT,
+  entity_id       INTEGER,
+  title           TEXT NOT NULL,
+  detail          JSONB DEFAULT '{}',
+  recommended_fix TEXT,
+  resolved        BOOLEAN DEFAULT FALSE,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_agent_issues_run_id   ON operations.agent_issues(run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_issues_type     ON operations.agent_issues(agent_type);
+CREATE INDEX IF NOT EXISTS idx_agent_issues_severity ON operations.agent_issues(severity);
+CREATE INDEX IF NOT EXISTS idx_agent_issues_resolved ON operations.agent_issues(resolved);
 
 -- batch_pen_operations (OG web-app — batch transfer/sale log)
 CREATE TABLE IF NOT EXISTS operations.batch_pen_operations (
@@ -3860,6 +4298,26 @@ CREATE TABLE IF NOT EXISTS system.system_positions (
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- LSJH-671 — per-DB schema-apply ledger. Answers "which schema is this box on,
+-- and did the last boot heal succeed?" — previously unanswerable: migration_log
+-- below records CFR ETL runs (not schema versions), and a failed boot heal was
+-- a warn-level log line nobody reads while the whole 6,800-line apply silently
+-- rolled back. db/index.js writes a row per (schema hash × outcome) change and
+-- raises an ops alert on failure. NOTE: db/index.js also creates this table
+-- OUTSIDE the heal transaction (a failed heal must still be recordable) —
+-- keep the two definitions in sync.
+CREATE TABLE IF NOT EXISTS system.schema_versions (
+  id           SERIAL PRIMARY KEY,
+  schema_hash  TEXT NOT NULL,
+  app_version  TEXT,
+  success      BOOLEAN NOT NULL,
+  error        TEXT,
+  duration_ms  INTEGER,
+  applied_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_schema_versions_applied
+    ON system.schema_versions (applied_at DESC);
+
 CREATE TABLE IF NOT EXISTS system.migration_log (
   id              SERIAL PRIMARY KEY,
   source_table    TEXT NOT NULL,
@@ -3917,6 +4375,23 @@ CREATE TABLE IF NOT EXISTS digistar.digistar_users (
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ
 );
+
+-- feed_order_exports (LSJH-300/305 — audit log of outbound feed-order pushes)
+-- One row per (run_id, export_mode) — CSV or API or remaining-feed. The
+-- `external_event_id` is the idempotency key callers use to avoid double
+-- pushing the same run (e.g. operator clicks Send twice).
+CREATE TABLE IF NOT EXISTS digistar.feed_order_exports (
+  id                SERIAL PRIMARY KEY,
+  run_id            UUID NOT NULL,
+  feed_date         DATE NOT NULL,
+  export_mode       TEXT NOT NULL CHECK (export_mode IN ('csv', 'api', 'remaining-feed')),
+  external_event_id TEXT UNIQUE,
+  payload           JSONB,
+  exported_by       INTEGER,
+  exported_at       TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_feed_order_exports_run     ON digistar.feed_order_exports (run_id);
+CREATE INDEX IF NOT EXISTS idx_feed_order_exports_date    ON digistar.feed_order_exports (feed_date DESC);
 
 
 -- ████████████████████████████████████████████████████████████████
@@ -3987,7 +4462,23 @@ DECLARE
         'CREATE TABLE digistar.digistar_data_history_y2026   PARTITION OF digistar.digistar_data_history FOR VALUES FROM (''2026-01-01'') TO (''2027-01-01'')',
         'CREATE TABLE digistar.digistar_data_history_y2027   PARTITION OF digistar.digistar_data_history FOR VALUES FROM (''2027-01-01'') TO (''2028-01-01'')',
         'CREATE TABLE digistar.digistar_data_history_y2028   PARTITION OF digistar.digistar_data_history FOR VALUES FROM (''2028-01-01'') TO (''2029-01-01'')',
-        'CREATE TABLE digistar.digistar_data_history_y2029   PARTITION OF digistar.digistar_data_history FOR VALUES FROM (''2029-01-01'') TO (''2030-01-01'')'
+        'CREATE TABLE digistar.digistar_data_history_y2029   PARTITION OF digistar.digistar_data_history FOR VALUES FROM (''2029-01-01'') TO (''2030-01-01'')',
+        -- feed.pen_feeds_temp partitions (LSJH-271)
+        'CREATE TABLE feed.pen_feeds_temp_default  PARTITION OF feed.pen_feeds_temp DEFAULT',
+        'CREATE TABLE feed.pen_feeds_temp_y2024    PARTITION OF feed.pen_feeds_temp FOR VALUES FROM (''2024-01-01'') TO (''2025-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_y2025    PARTITION OF feed.pen_feeds_temp FOR VALUES FROM (''2025-01-01'') TO (''2026-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_y2026    PARTITION OF feed.pen_feeds_temp FOR VALUES FROM (''2026-01-01'') TO (''2027-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_y2027    PARTITION OF feed.pen_feeds_temp FOR VALUES FROM (''2027-01-01'') TO (''2028-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_y2028    PARTITION OF feed.pen_feeds_temp FOR VALUES FROM (''2028-01-01'') TO (''2029-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_y2029    PARTITION OF feed.pen_feeds_temp FOR VALUES FROM (''2029-01-01'') TO (''2030-01-01'')',
+        -- feed.pen_feeds_temp_cycles partitions (LSJH-271)
+        'CREATE TABLE feed.pen_feeds_temp_cycles_default PARTITION OF feed.pen_feeds_temp_cycles DEFAULT',
+        'CREATE TABLE feed.pen_feeds_temp_cycles_y2024   PARTITION OF feed.pen_feeds_temp_cycles FOR VALUES FROM (''2024-01-01'') TO (''2025-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_cycles_y2025   PARTITION OF feed.pen_feeds_temp_cycles FOR VALUES FROM (''2025-01-01'') TO (''2026-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_cycles_y2026   PARTITION OF feed.pen_feeds_temp_cycles FOR VALUES FROM (''2026-01-01'') TO (''2027-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_cycles_y2027   PARTITION OF feed.pen_feeds_temp_cycles FOR VALUES FROM (''2027-01-01'') TO (''2028-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_cycles_y2028   PARTITION OF feed.pen_feeds_temp_cycles FOR VALUES FROM (''2028-01-01'') TO (''2029-01-01'')',
+        'CREATE TABLE feed.pen_feeds_temp_cycles_y2029   PARTITION OF feed.pen_feeds_temp_cycles FOR VALUES FROM (''2029-01-01'') TO (''2030-01-01'')'
     ];
     _sql TEXT;
     _tbl TEXT;
@@ -4001,6 +4492,242 @@ BEGIN
             EXECUTE _sql;
         END IF;
     END LOOP;
+END
+$$;
+
+
+-- ████████████████████████████████████████████████████████████████
+-- ██  LSJH-334 — concurrent /apply guard
+-- ████████████████████████████████████████████████████████████████
+-- Partial UNIQUE index prevents duplicate unapplied penfeedsdata rows when
+-- two /apply calls race. The natural key for "unapplied feed for this pen on
+-- this date" is (pen_number_id, feed_date, ration_code); we include feed_date
+-- because PG requires partitioning columns in any UNIQUE on a partitioned
+-- table. Without this, a second /apply that lands while apply-feed has
+-- already consumed the first batch's rows would silently INSERT duplicates →
+-- double-charged feed costs.
+--
+-- Wrapped in a DO block so legacy farm DBs missing the ration_code column,
+-- or with existing duplicates that would violate the new constraint, log a
+-- NOTICE and continue rather than failing the whole schema-apply pass.
+-- Affected farms need either schema backfill (add ration_code) or data
+-- dedupe before the guard becomes active for them.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'feed'
+           AND table_name = 'penfeedsdata'
+           AND column_name = 'ration_code'
+    ) THEN
+        RAISE NOTICE 'LSJH-334: feed.penfeedsdata.ration_code missing — skipping uq_penfeedsdata_unapplied';
+        RETURN;
+    END IF;
+    BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_penfeedsdata_unapplied
+            ON feed.penfeedsdata (pen_number_id, feed_date, ration_code)
+            WHERE applied_to_cattle = FALSE;
+    EXCEPTION WHEN unique_violation OR duplicate_table THEN
+        RAISE NOTICE 'LSJH-334: existing unapplied duplicates prevent uq_penfeedsdata_unapplied — dedupe data first';
+    END;
+END
+$$;
+
+
+-- ████████████████████████████████████████████████████████████████
+-- ██  LSJH-327 — triggers keep denormalised pens columns in sync
+-- ████████████████████████████████████████████████████████████████
+-- NOTE: this block is also applied separately by initFarmDb so triggers
+-- get installed even when an earlier statement in this schema file errors
+-- (e.g. a legacy farm DB missing a column). Keep both copies in sync.
+--
+-- pen.pens has cached aggregates (current_head, ration_id, current_ration_code)
+-- that several read paths depend on (create-loads / feed-mill order generator,
+-- feed-variance, dashboards, bunk-call ration display). Before these triggers,
+-- nothing wrote those columns post-migration so they drifted silently:
+-- cow movements didn't bump current_head, ration changes had no writeback.
+-- Now the cache is maintained automatically:
+--   * cattle.cows UPDATE/INSERT/DELETE → bump pens.current_head on the
+--     affected pen(s) based on status='active' transitions and pen_id moves.
+--   * pen.pen_ration_history INSERT → sync pens.ration_id and
+--     pens.current_ration_code to the newest row for that pen.
+-- One-time backfill at the bottom reconciles existing rows so the cache
+-- starts correct.
+
+CREATE OR REPLACE FUNCTION pen.cows_bump_current_head()
+RETURNS TRIGGER AS $$
+DECLARE
+    was_active BOOLEAN := FALSE;
+    is_active  BOOLEAN := FALSE;
+    old_pen    INTEGER := NULL;
+    new_pen    INTEGER := NULL;
+BEGIN
+    -- Initialise locals based on TG_OP. PL/pgSQL DECLARE evaluates eagerly,
+    -- so OLD.*/NEW.* refs must live inside the BEGIN where they're guarded.
+    IF TG_OP IN ('UPDATE','DELETE') THEN
+        was_active := (OLD.status = 'active');
+        old_pen    := OLD.pen_id;
+    END IF;
+    IF TG_OP IN ('INSERT','UPDATE') THEN
+        is_active := (NEW.status = 'active');
+        new_pen   := NEW.pen_id;
+    END IF;
+    -- Decrement the OLD pen when the cow was active there and isn't now (or moved).
+    IF was_active AND old_pen IS NOT NULL AND (NOT is_active OR new_pen IS DISTINCT FROM old_pen) THEN
+        UPDATE pen.pens
+           SET current_head = GREATEST(COALESCE(current_head, 0) - 1, 0)
+         WHERE id = old_pen;
+    END IF;
+    -- Increment the NEW pen when the cow is active there and wasn't before (or moved in).
+    IF is_active AND new_pen IS NOT NULL AND (NOT was_active OR new_pen IS DISTINCT FROM old_pen) THEN
+        UPDATE pen.pens
+           SET current_head = COALESCE(current_head, 0) + 1
+         WHERE id = new_pen;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_cows_bump_current_head ON cattle.cows;
+CREATE TRIGGER trg_cows_bump_current_head
+AFTER INSERT OR UPDATE OF status, pen_id OR DELETE
+ON cattle.cows
+FOR EACH ROW EXECUTE FUNCTION pen.cows_bump_current_head();
+
+-- LSJH-349: Resolve the pen's current ration from history every time the
+-- table changes, rather than blindly stamping NEW.ration_id onto the cache.
+-- A back-dated INSERT (e.g. inserting a historical row to correct an old
+-- assignment) used to silently roll the current ration backwards because
+-- the trigger trusted NEW.* unconditionally. The DISTINCT ON ordering here
+-- mirrors the one-time backfill below: open history rows (effective_to IS
+-- NULL) win, otherwise the most-recent effective_from wins.
+--
+-- IMPORTANT: this function is duplicated in server/db/index.js (initFarmDb).
+-- Keep both copies in sync when changing the trigger body.
+CREATE OR REPLACE FUNCTION pen.pen_ration_history_sync_pens()
+RETURNS TRIGGER AS $body$
+BEGIN
+    UPDATE pen.pens p
+       SET ration_id           = h.ration_id,
+           current_ration_code = r.ration_code
+      FROM (
+        SELECT DISTINCT ON (pen_id) pen_id, ration_id
+          FROM pen.pen_ration_history
+         WHERE pen_id = NEW.pen_id
+         ORDER BY pen_id,
+                  CASE WHEN effective_to IS NULL THEN 0 ELSE 1 END,
+                  effective_from DESC
+      ) h
+      LEFT JOIN feed.rations r ON r.id = h.ration_id
+     WHERE p.id = h.pen_id;
+    -- Note: when NEW.ration_id IS NULL the DISTINCT ON still picks the most
+    -- recent surviving row for the pen. If there is no such row (every
+    -- history entry has been logically retired), the UPDATE matches nothing,
+    -- which is the correct cache state (pen has no current ration).
+    IF NEW.ration_id IS NULL AND NOT EXISTS (
+      SELECT 1 FROM pen.pen_ration_history
+       WHERE pen_id = NEW.pen_id AND effective_to IS NULL
+    ) THEN
+      UPDATE pen.pens SET ration_id = NULL, current_ration_code = NULL WHERE id = NEW.pen_id;
+    END IF;
+    RETURN NULL;
+END;
+$body$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_pen_ration_history_sync_pens ON pen.pen_ration_history;
+CREATE TRIGGER trg_pen_ration_history_sync_pens
+AFTER INSERT ON pen.pen_ration_history
+FOR EACH ROW EXECUTE FUNCTION pen.pen_ration_history_sync_pens();
+
+-- LSJH-669 — hub pen moves must reach pen.penshistory. DOF reconstruction
+-- (services/cattle/dof.js) and agistment charging read penshistory ONLY, while
+-- every app move path writes pen.pen_movements ONLY — so on hub-only farms
+-- money/DOF ran on empty history. Mirror each pen_movements insert into
+-- penshistory (reason 'hub-move' is the marker that scopes backfill and undo),
+-- guarded so paths that already dual-write (data-import) don't double up.
+-- IMPORTANT: this function is duplicated in server/db/index.js (initFarmDb).
+-- Keep both copies in sync when changing the trigger body.
+CREATE OR REPLACE FUNCTION pen.pen_movements_to_history()
+RETURNS TRIGGER AS $body$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO pen.penshistory (cow_id, pen_name, pen_number_id, movedate, reason, created_at)
+    SELECT NEW.cow_id, p.name, NEW.pen_id, COALESCE(NEW.moved_at, NOW())::date, 'hub-move', NOW()
+      FROM pen.pens p
+     WHERE p.id = NEW.pen_id
+       AND NEW.cow_id IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM pen.penshistory ph
+          WHERE ph.cow_id = NEW.cow_id
+            AND ph.movedate = COALESCE(NEW.moved_at, NOW())::date
+            AND (ph.pen_number_id = NEW.pen_id OR ph.pen_name = p.name)
+       );
+    RETURN NULL;
+  ELSIF TG_OP = 'DELETE' THEN
+    -- undo of a mistaken move: retire exactly one mirrored row
+    DELETE FROM pen.penshistory
+     WHERE id IN (
+       SELECT id FROM pen.penshistory
+        WHERE cow_id = OLD.cow_id
+          AND movedate = COALESCE(OLD.moved_at, NOW())::date
+          AND pen_number_id = OLD.pen_id
+          AND reason = 'hub-move'
+        LIMIT 1
+     );
+    RETURN NULL;
+  END IF;
+  RETURN NULL;
+END;
+$body$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_pen_movements_to_history ON pen.pen_movements;
+CREATE TRIGGER trg_pen_movements_to_history
+AFTER INSERT OR DELETE ON pen.pen_movements
+FOR EACH ROW EXECUTE FUNCTION pen.pen_movements_to_history();
+
+-- One-time backfill — reconcile any existing drift before the triggers
+-- take over. Idempotent: re-running just rewrites the same values.
+DO $$
+BEGIN
+    -- current_head ← live COUNT of active cows per pen
+    UPDATE pen.pens p
+       SET current_head = sub.cnt
+      FROM (
+        SELECT pen_id, COUNT(*)::int AS cnt
+          FROM cattle.cows
+         WHERE status = 'active' AND pen_id IS NOT NULL
+         GROUP BY pen_id
+      ) sub
+     WHERE p.id = sub.pen_id
+       AND COALESCE(p.current_head, -1) IS DISTINCT FROM sub.cnt;
+    -- Zero-out pens that have no active cows but a non-zero cache.
+    UPDATE pen.pens
+       SET current_head = 0
+     WHERE COALESCE(current_head, 0) > 0
+       AND id NOT IN (
+         SELECT DISTINCT pen_id FROM cattle.cows
+          WHERE status = 'active' AND pen_id IS NOT NULL
+       );
+    -- ration_id / current_ration_code ← latest pen_ration_history row.
+    -- effective_to IS NULL means "current"; if all rows have effective_to set,
+    -- pick the one with the latest effective_from.
+    UPDATE pen.pens p
+       SET ration_id           = h.ration_id,
+           current_ration_code = r.ration_code
+      FROM (
+        SELECT DISTINCT ON (pen_id) pen_id, ration_id
+          FROM pen.pen_ration_history
+         ORDER BY pen_id,
+                  CASE WHEN effective_to IS NULL THEN 0 ELSE 1 END,
+                  effective_from DESC
+      ) h
+      LEFT JOIN feed.rations r ON r.id = h.ration_id
+     WHERE p.id = h.pen_id
+       AND (
+         p.ration_id IS DISTINCT FROM h.ration_id
+         OR p.current_ration_code IS DISTINCT FROM r.ration_code
+       );
 END
 $$;
 
@@ -4029,6 +4756,14 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_recipe_pcnt') THEN
         ALTER TABLE feed.ration_recipe_records ADD CONSTRAINT chk_recipe_pcnt CHECK (pcnt_of_ration BETWEEN 0 AND 100);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_feeding_order_pcnt_sum') THEN
+        ALTER TABLE feed.feeding_order_for_day ADD CONSTRAINT chk_feeding_order_pcnt_sum
+            CHECK (feed_pcnt_cycle_1 + feed_pcnt_cycle_2 + feed_pcnt_cycle_3 + feed_pcnt_cycle_4 = 100);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_feeding_order_truck_config') THEN
+        ALTER TABLE feed.feeding_order_for_day ADD CONSTRAINT chk_feeding_order_truck_config
+            CHECK (truck_volume_m3 IS NOT NULL OR truck_max_load_kgs IS NOT NULL);
     END IF;
 END
 $$;
@@ -4080,6 +4815,12 @@ CREATE INDEX IF NOT EXISTS idx_commodtrans_code_date   ON commodity.commodtrans 
 CREATE INDEX IF NOT EXISTS idx_locchanges_beast_date   ON transport.location_changes (beast_id, movement_date);
 CREATE INDEX IF NOT EXISTS idx_locchanges_cow_date     ON transport.location_changes (cow_id, movement_date);
 CREATE INDEX IF NOT EXISTS idx_carcase_kill_date_sold  ON carcase.carcase_data (kill_date, sold_to_contact_id);
+
+-- LSJH-163: composite indexes for high-volume tables (cow + timestamp)
+CREATE INDEX IF NOT EXISTS idx_weighing_events_cow_weighed_at ON weighing.weighing_events (cow_id, weighed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_treatments_cow_administered_at ON health.treatments (cow_id, administered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pen_movements_cow_moved_at     ON pen.pen_movements (cow_id, moved_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pen_movements_pen_moved_at     ON pen.pen_movements (pen_id, moved_at DESC);
 
 -- FK-covering indexes (missing from earlier sections)
 CREATE INDEX IF NOT EXISTS idx_treatment_regime_disease ON health.treatment_regimes(disease_id);
@@ -4285,11 +5026,6 @@ ALTER TABLE breeding.breeding_dams ADD COLUMN IF NOT EXISTS dam_supplier VARCHAR
 ALTER TABLE breeding.breeding_sires ADD COLUMN IF NOT EXISTS awa_sire_id VARCHAR(50) NULL;
 ALTER TABLE breeding.breeding_sires ADD COLUMN IF NOT EXISTS sire_line_id SMALLINT NULL;
 ALTER TABLE breeding.breeding_sires ADD COLUMN IF NOT EXISTS sire_supplier VARCHAR(50) NULL;
--- cattle.cows raw legacy mirror columns (also normalized to purchase_lot_id / status / pen_id)
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS purch_lot_no VARCHAR(20) NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS died BOOLEAN NULL;
-ALTER TABLE cattle.cows ADD COLUMN IF NOT EXISTS pen_number VARCHAR(20) NULL;
-ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS beastid INTEGER NULL;
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS abattoir_establishment_number INTEGER NULL;
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS carc_wght_left REAL NULL;
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS carc_wght_right REAL NULL;
@@ -4303,6 +5039,46 @@ ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS mscle_score VARCHAR(2)
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS price_doll_kg_left NUMERIC(12,4) NULL;
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS price_doll_kg_right NUMERIC(12,4) NULL;
 ALTER TABLE carcase.carcase_data ADD COLUMN IF NOT EXISTS rcinvoice_date DATE NULL;
+-- LSJH-523 [CFR D6]: auto price-lookup support. effective-dated grade price
+-- (Look_Up_Price), US yield-grade price bands (Look_Up_US_Price), RV marbling/
+-- meat-colour price bands (PriceByCarcMeas), + the US yield-grade selector.
+ALTER TABLE carcase.carcase_data    ADD COLUMN IF NOT EXISTS yield_grade      SMALLINT NULL;
+ALTER TABLE carcase.carcase_grades  ADD COLUMN IF NOT EXISTS effective_from   DATE NULL;
+-- LSJH-713 (CFR D6): relax single-price-per-grade uniqueness so the grade CRUD
+-- can maintain dated price-change history (the lookup already reads the latest
+-- effective_from ≤ kill_date). Composite still rejects duplicate (code, date).
+-- Drop any auto-named single-column UNIQUE constraints (name-independent).
+DO $carcgrade$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT con.conname
+      FROM pg_constraint con
+      JOIN pg_class c ON c.oid = con.conrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'carcase' AND c.relname = 'carcase_grades'
+       AND con.contype = 'u'
+  LOOP
+    EXECUTE format('ALTER TABLE carcase.carcase_grades DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+END
+$carcgrade$;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_carcase_grades_code_effective
+  ON carcase.carcase_grades (code, effective_from);
+ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS from_date      DATE NULL;
+ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg1_price      NUMERIC(12,4) NULL;
+ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg2_price      NUMERIC(12,4) NULL;
+ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg3_price      NUMERIC(12,4) NULL;
+ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg4_price      NUMERIC(12,4) NULL;
+ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg5_price      NUMERIC(12,4) NULL;
+ALTER TABLE carcase.carcase_prices  ADD COLUMN IF NOT EXISTS sold_to_id       INTEGER NULL;
+ALTER TABLE carcase.carcase_prices  ADD COLUMN IF NOT EXISTS kill_date_from   DATE NULL;
+ALTER TABLE carcase.carcase_prices  ADD COLUMN IF NOT EXISTS kill_date_to     DATE NULL;
+ALTER TABLE carcase.carcase_prices  ADD COLUMN IF NOT EXISTS marbling_from    NUMERIC(5,2) NULL;
+ALTER TABLE carcase.carcase_prices  ADD COLUMN IF NOT EXISTS marbling_to      NUMERIC(5,2) NULL;
+ALTER TABLE carcase.carcase_prices  ADD COLUMN IF NOT EXISTS meat_colour_from NUMERIC(5,2) NULL;
+ALTER TABLE carcase.carcase_prices  ADD COLUMN IF NOT EXISTS meat_colour_to   NUMERIC(5,2) NULL;
+ALTER TABLE carcase.carcase_prices  ADD COLUMN IF NOT EXISTS live_or_carc     TEXT NULL;
 ALTER TABLE carcase.carcase_datatype2 ADD COLUMN IF NOT EXISTS ausmarbling SMALLINT NULL;
 ALTER TABLE carcase.carcase_datatype2 ADD COLUMN IF NOT EXISTS bodyno SMALLINT NULL;
 ALTER TABLE carcase.carcase_datatype2 ADD COLUMN IF NOT EXISTS boning_date DATE NULL;
@@ -4378,6 +5154,37 @@ ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg4_price NUMERIC
 ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS yg5_price NUMERIC(12,4) NULL;
 -- LSJH-214 — US carcase-grade lookup gets an active flag, matching the AUS variant.
 ALTER TABLE carcase.carcase_grades_us ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+-- LSJH-671 — heal path for CFR-migrated farm DBs whose schema copy predates
+-- the inline `active` on these three lookups (lsj-migration's copy lags the
+-- canonical file, and CREATE TABLE IF NOT EXISTS never adds columns): without
+-- these, reference CRUD 42703s and carcase auto-pricing aborts the save on
+-- migrated boxes.
+ALTER TABLE cattle.cull_reasons ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE cattle.location_types ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE carcase.carcase_grades ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- LSJH-671 — repair the known ensure-block/canonical divergence: on existing
+-- boxes compliance.biosecurity_visitors was created by the db/index.js
+-- ensure-block, which lacked the visitor_type CHECK this file defines inline
+-- (CREATE TABLE IF NOT EXISTS then no-ops forever). Skip-and-warn: a box
+-- holding out-of-vocabulary values logs a WARNING instead of aborting the heal.
+DO $$
+BEGIN
+  IF to_regclass('compliance.biosecurity_visitors') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'compliance.biosecurity_visitors'::regclass
+       AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%visitor_type%'
+  ) THEN
+    BEGIN
+      ALTER TABLE compliance.biosecurity_visitors
+        ADD CONSTRAINT chk_biosec_visitor_type
+        CHECK (visitor_type IN ('visitor','driver'));
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'LSJH-671: chk_biosec_visitor_type skipped (out-of-vocabulary visitor_type values present?) — %', SQLERRM;
+    END;
+  END IF;
+END $$;
 ALTER TABLE carcase.carcase_import_data ADD COLUMN IF NOT EXISTS col1 TEXT;
 ALTER TABLE carcase.carcase_import_data ADD COLUMN IF NOT EXISTS col10 TEXT;
 ALTER TABLE carcase.carcase_import_data ADD COLUMN IF NOT EXISTS col11 TEXT;
@@ -4508,6 +5315,10 @@ ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS ref_no VARCHAR(8);
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS staffid SMALLINT NULL;
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS tempered_weight_fed_kgs REAL NULL;
 ALTER TABLE commodity.commodtrans ADD COLUMN IF NOT EXISTS value NUMERIC(15,4) NULL;
+-- commodtrans consumer indexes (LSJH-280): feed-out idempotency, docket re-apply, stable rebuild order
+CREATE INDEX IF NOT EXISTS idx_commodtrans_feedload ON commodity.commodtrans (feed_load_record_no) WHERE feed_load_record_no IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_commodtrans_refno ON commodity.commodtrans (ref_no);
+CREATE INDEX IF NOT EXISTS idx_commodtrans_ctrid ON commodity.commodtrans (commodity_code, ctr_id);
 ALTER TABLE commodity.period_stocks_closing_balance ADD COLUMN IF NOT EXISTS commodity_name VARCHAR(15) NULL;
 ALTER TABLE commodity.period_stocks_closing_balance ADD COLUMN IF NOT EXISTS stock_tons_weight REAL;
 ALTER TABLE commodity.period_stocks_closing_balance ADD COLUMN IF NOT EXISTS stock_value NUMERIC(12,4);
@@ -4614,6 +5425,10 @@ ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS pen_number_id SMAL
 -- rationN_code/rationN_pcnt column set (matches ration1_/ration2_ naming).
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration3_code SMALLINT NULL;
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration3_pcnt NUMERIC(5,2) NULL;
+-- LEGACY/UNUSED — the *_feedN columns below are a CFR-shaped mirror that the
+-- /api/dual-ration-feeding route NEVER writes (the canonical set is rationN_code
+-- / rationN_pcnt above). Retained for CFR import compatibility; do not populate
+-- from new code and do not drop (LSJH-448 review finding [5]).
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration_code_feed1 SMALLINT NULL;
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration_code_feed2 SMALLINT NULL;
 ALTER TABLE feed.dual_ration_feeding ADD COLUMN IF NOT EXISTS ration_code_feed3 SMALLINT NULL;
@@ -4628,6 +5443,33 @@ ALTER TABLE feed.feed_month_end_date ADD COLUMN IF NOT EXISTS current_monthstart
 ALTER TABLE feed.feeddb_pens_file ADD COLUMN IF NOT EXISTS current_exit_pen BOOLEAN NULL;
 ALTER TABLE feed.feeddb_pens_file ADD COLUMN IF NOT EXISTS include_in_pen_list BOOLEAN NULL;
 ALTER TABLE feed.feeddb_pens_file ADD COLUMN IF NOT EXISTS ispaddock BOOLEAN NULL;
+
+-- ── CFR → Postgres sync (pull live feed/pen/bunk data from CATTLE_feed) ──────
+-- penfeedsdata rows sourced from CFR carry their legacy PenFeedsData.ID in
+-- cfr_id, so the throttled sync can replace its own rows idempotently
+-- (DELETE WHERE feed_date IN window AND cfr_id IS NOT NULL, then re-INSERT)
+-- without ever touching LSJ-HUB-originated rows (cfr_id IS NULL).
+ALTER TABLE feed.penfeedsdata ADD COLUMN IF NOT EXISTS cfr_id INTEGER;
+
+-- Singleton per-farm row tracking the last CFR→PG sync, for hourly throttling,
+-- the status pill, and observability.
+CREATE TABLE IF NOT EXISTS feed.cfr_sync_state (
+  id              BOOLEAN PRIMARY KEY DEFAULT TRUE,
+  last_synced_at  TIMESTAMPTZ,
+  last_status     TEXT,          -- 'ok' | 'error' | 'running'
+  last_error      TEXT,
+  rows_penfeeds   INTEGER,
+  rows_pens       INTEGER,
+  rows_bunk       INTEGER,
+  last_divergence_at          TIMESTAMPTZ,  -- LSJH-427: last CFR↔PG divergence alert
+  last_divergence_sig         TEXT,         -- dedupe signature of the diverging keys
+  last_divergence_mismatches  INTEGER,
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT cfr_sync_state_singleton CHECK (id)
+);
+ALTER TABLE feed.cfr_sync_state ADD COLUMN IF NOT EXISTS last_divergence_at TIMESTAMPTZ;
+ALTER TABLE feed.cfr_sync_state ADD COLUMN IF NOT EXISTS last_divergence_sig TEXT;
+ALTER TABLE feed.cfr_sync_state ADD COLUMN IF NOT EXISTS last_divergence_mismatches INTEGER;
 ALTER TABLE feed.feeding_details ADD COLUMN IF NOT EXISTS bunk_codes_total SMALLINT NULL;
 ALTER TABLE feed.feeding_details ADD COLUMN IF NOT EXISTS feeding_regimen_id SMALLINT NULL;
 ALTER TABLE feed.feeding_details ADD COLUMN IF NOT EXISTS kgs_head_adj REAL NULL;
@@ -4764,7 +5606,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ration_regime_pen_feed_date
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS group_name VARCHAR(15) NULL;
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS notes VARCHAR(50) NULL;
 ALTER TABLE feed.ration_types ADD COLUMN IF NOT EXISTS ration_type VARCHAR(15);
--- feed.rations OG-style columns (notes, valueperton, custom_feed_charge_ton) are inline in CREATE TABLE
+-- feed.rations: unified ration master (columns defined inline above)
 ALTER TABLE feed.titration_ration_regimes ADD COLUMN IF NOT EXISTS adg_expected REAL NULL;
 ALTER TABLE feed.titration_ration_regimes ADD COLUMN IF NOT EXISTS date_defined DATE NULL;
 ALTER TABLE feed.titration_ration_regimes ADD COLUMN IF NOT EXISTS end_day_number SMALLINT;
@@ -4794,9 +5636,6 @@ ALTER TABLE feed.vendor_declarations ADD COLUMN IF NOT EXISTS owned_lt_2months B
 ALTER TABLE feed.vendor_declarations ADD COLUMN IF NOT EXISTS qa_program_details VARCHAR(50) NULL;
 ALTER TABLE feed.vendor_declarations ADD COLUMN IF NOT EXISTS withholding_for_drugs BOOLEAN NULL;
 ALTER TABLE feed.vendor_declarations ADD COLUMN IF NOT EXISTS withholding_for_feed BOOLEAN NULL;
--- Wave-6 mirror (LSJH-491/456): liquid-pot virtual-ration flag + named-titration-regime assignment.
-ALTER TABLE feed.rations ADD COLUMN IF NOT EXISTS is_liquid_pot BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE pen.pens ADD COLUMN IF NOT EXISTS titration_regime_id INTEGER;
 ALTER TABLE finance.beast_accumed_feed_by_commodity ADD COLUMN IF NOT EXISTS accumed_cost NUMERIC(12,4);
 ALTER TABLE finance.beast_accumed_feed_by_commodity ADD COLUMN IF NOT EXISTS accumed_custfeed_charge NUMERIC(12,4);
 ALTER TABLE finance.beast_accumed_feed_by_commodity ADD COLUMN IF NOT EXISTS accumed_kgs REAL;
@@ -4863,6 +5702,12 @@ ALTER TABLE finance.rv_rcti_data ADD COLUMN IF NOT EXISTS cull_reason VARCHAR(20
 ALTER TABLE finance.rv_rcti_data ADD COLUMN IF NOT EXISTS head SMALLINT NULL;
 ALTER TABLE finance.rv_rcti_data ADD COLUMN IF NOT EXISTS notes VARCHAR(50) NULL;
 ALTER TABLE finance.rv_rcti_data ADD COLUMN IF NOT EXISTS weight REAL NULL;
+-- LSJH-484 — link an RV freight RCTI line back to its delivery docket so apply()
+-- is idempotent (one freight RCTI per docket) + tag the line type.
+ALTER TABLE finance.rv_rcti_data ADD COLUMN IF NOT EXISTS docket_id INTEGER NULL;
+ALTER TABLE finance.rv_rcti_data ADD COLUMN IF NOT EXISTS rcti_type VARCHAR(10) NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rv_rcti_freight_docket
+  ON finance.rv_rcti_data(docket_id) WHERE rcti_type = 'freight';
 ALTER TABLE finance.tandr_buying_details ADD COLUMN IF NOT EXISTS animal_grade VARCHAR(3) NULL;
 ALTER TABLE finance.tandr_buying_details ADD COLUMN IF NOT EXISTS beastid INTEGER;
 ALTER TABLE finance.tandr_buying_details ADD COLUMN IF NOT EXISTS date_paid DATE NULL;
@@ -4930,11 +5775,32 @@ ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEF
 ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS due_date DATE NULL;
 ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS regime_id INTEGER NULL;
 ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS regime_step_id INTEGER NULL;
+-- LSJH-674 — pin the status vocabulary: consumption reports and the on-hand
+-- calc distinguish administered ('given') from scheduled ('to-be-given');
+-- free-text garbage here silently corrupts both. 'skipped' is reserved for the
+-- mark-as-given flow. Skip-and-warn like the unique indexes: a box holding an
+-- out-of-vocabulary value logs a WARNING (clean the rows, constraint lands on
+-- the next boot) instead of aborting the heal.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'health.drugs_given'::regclass
+       AND conname = 'chk_drugs_given_status'
+  ) THEN
+    BEGIN
+      ALTER TABLE health.drugs_given
+        ADD CONSTRAINT chk_drugs_given_status
+        CHECK (status IN ('given', 'to-be-given', 'skipped'));
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'LSJH-674: chk_drugs_given_status skipped (out-of-vocabulary status values present?) — %', SQLERRM;
+    END;
+  END IF;
+END $$;
 ALTER TABLE health.drugs_purchased ADD COLUMN IF NOT EXISTS drugid SMALLINT NULL;
 ALTER TABLE health.mort_morb_triggers ADD COLUMN IF NOT EXISTS tablename VARCHAR(10);
 ALTER TABLE health.sick_beast_records ADD COLUMN IF NOT EXISTS last_modified_timestamp TIMESTAMPTZ NULL;
 ALTER TABLE health.sick_beast_temperatures ADD COLUMN IF NOT EXISTS beastid INTEGER NULL;
-ALTER TABLE health.treatment_regimes ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE health.treatment_regimes ADD COLUMN IF NOT EXISTS day_numb SMALLINT NULL;
 ALTER TABLE health.treatment_regimes ADD COLUMN IF NOT EXISTS diseaseid SMALLINT NULL;
 ALTER TABLE health.treatment_regimes ADD COLUMN IF NOT EXISTS dosebyweight BOOLEAN NULL;
@@ -5172,6 +6038,13 @@ ALTER TABLE transport.deliverydockets ADD COLUMN IF NOT EXISTS test_wght_kgs REA
 ALTER TABLE transport.deliverydockets ADD COLUMN IF NOT EXISTS vehicle_id VARCHAR(7) NULL;
 ALTER TABLE transport.deliverydockets ADD COLUMN IF NOT EXISTS vendor_dec VARCHAR(15) NULL;
 ALTER TABLE transport.deliverydockets ADD COLUMN IF NOT EXISTS weighunits BOOLEAN NULL;
+-- LSJH-484 — [CFR D16] site-specific deliveries variants. `variant` selects the
+-- per-site docket behaviour (basic = Lowlands; rv = RV moisture/dockage + RCTI
+-- freight invoicing). dockage_pcnt is the RV moisture/dockage deduction applied to
+-- the payment (net) weight; payment_weight is the resulting paid weight.
+ALTER TABLE transport.deliverydockets ADD COLUMN IF NOT EXISTS variant VARCHAR(10) NOT NULL DEFAULT 'basic';
+ALTER TABLE transport.deliverydockets ADD COLUMN IF NOT EXISTS dockage_pcnt NUMERIC(5,2) NULL;
+ALTER TABLE transport.deliverydockets ADD COLUMN IF NOT EXISTS payment_weight NUMERIC(10,2) NULL;
 ALTER TABLE transport.loaddockages ADD COLUMN IF NOT EXISTS authorised_by VARCHAR(5) NULL;
 ALTER TABLE transport.loaddockages ADD COLUMN IF NOT EXISTS commodity_code SMALLINT NULL;
 ALTER TABLE transport.loaddockages ADD COLUMN IF NOT EXISTS docket_no INTEGER;
@@ -5272,7 +6145,6 @@ ALTER TABLE carcase.carcase_grades ALTER COLUMN code DROP NOT NULL;
 ALTER TABLE carcase.carcase_grades_us ALTER COLUMN grade_code DROP NOT NULL;
 ALTER TABLE system.code_references_index ALTER COLUMN code DROP NOT NULL;
 ALTER TABLE commodity.commodities ALTER COLUMN commodity_name DROP NOT NULL;
--- feed.rations.name column no longer exists (consolidated to ration_name)
 ALTER TABLE weighing.weighing_types ALTER COLUMN name DROP NOT NULL;
 ALTER TABLE feed.bunk_code_desc ALTER COLUMN code DROP NOT NULL;
 ALTER TABLE feed.feed_month_end_date ALTER COLUMN end_date DROP NOT NULL;
@@ -5320,7 +6192,6 @@ DECLARE
     _fks TEXT[][] := ARRAY[
         -- cattle → pen, purchasing, contacts
         ARRAY['fk_map_paddocks_pen',      'ALTER TABLE map.paddocks ADD CONSTRAINT fk_map_paddocks_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
-        ARRAY['fk_pens_titration_regime', 'ALTER TABLE pen.pens ADD CONSTRAINT fk_pens_titration_regime FOREIGN KEY (titration_regime_id) REFERENCES feed.titration_regimes(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_pen',              'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_purchase_lot',     'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_purchase_lot FOREIGN KEY (purchase_lot_id) REFERENCES purchasing.purchase_lots(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_program_id',       'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_program_id FOREIGN KEY (program_id) REFERENCES cattle.cattle_program_types(id) ON DELETE SET NULL'],
@@ -5336,8 +6207,10 @@ DECLARE
         ARRAY['fk_sick_beast_disease',    'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_disease FOREIGN KEY (disease_id) REFERENCES health.diseases(disease_id) ON DELETE SET NULL'],
         ARRAY['fk_sick_beast_diagnoser',  'ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_diagnoser FOREIGN KEY (diagnoser_empl_id) REFERENCES feed.feedlot_staff(user_id) ON DELETE SET NULL'],
         ARRAY['fk_sick_beast_custfeedowner','ALTER TABLE health.sick_beast_records ADD CONSTRAINT fk_sick_beast_custfeedowner FOREIGN KEY (customfeedownerid) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
-        -- drugs_given.drug_id is id-space in LSJ-HUB (LSJH-531): the runner remaps
-        -- CFR Drug_IDs to serial ids at load, so the FK targets drugs(id).
+        -- drugs_given.drug_id: app writers (treatmentRegimeApply, vendor-bovilus) insert
+        -- drugs.id and ALL readers join d.id = dg.drug_id — targets the serial PK, NOT the
+        -- legacy drugs.drug_id ETL key. Migrated CFR-space rows are remapped to id-space by
+        -- the fk-repair block below (LSJH-531).
         ARRAY['fk_drugs_given_drug',      'ALTER TABLE health.drugs_given ADD CONSTRAINT fk_drugs_given_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(id) ON DELETE SET NULL'],
         ARRAY['fk_drugs_given_sb',        'ALTER TABLE health.drugs_given ADD CONSTRAINT fk_drugs_given_sb FOREIGN KEY (sb_rec_no) REFERENCES health.sick_beast_records(sb_rec_no) ON DELETE SET NULL'],
         ARRAY['fk_autopsy_sb',            'ALTER TABLE health.autopsy_records ADD CONSTRAINT fk_autopsy_sb FOREIGN KEY (sb_rec_no) REFERENCES health.sick_beast_records(sb_rec_no) ON DELETE RESTRICT'],
@@ -5366,6 +6239,7 @@ DECLARE
         ARRAY['fk_costs_cow',             'ALTER TABLE finance.costs ADD CONSTRAINT fk_costs_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_costs_beast',           'ALTER TABLE finance.costs ADD CONSTRAINT fk_costs_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_costs_code',            'ALTER TABLE finance.costs ADD CONSTRAINT fk_costs_code FOREIGN KEY (revexp_code) REFERENCES finance.cost_codes(revexp_code) ON DELETE RESTRICT'],
+        ARRAY['fk_costs_overhead_hist',   'ALTER TABLE finance.costs ADD CONSTRAINT fk_costs_overhead_hist FOREIGN KEY (overhead_history_id) REFERENCES cattle.overhead_application_history(id) ON DELETE CASCADE'],
         ARRAY['fk_costsfeed_cow',         'ALTER TABLE finance.costs_feed_detail ADD CONSTRAINT fk_costsfeed_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_costsfeed_beast',       'ALTER TABLE finance.costs_feed_detail ADD CONSTRAINT fk_costsfeed_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_custfeed_inv_lot',      'ALTER TABLE finance.custfeed_invoices_list ADD CONSTRAINT fk_custfeed_inv_lot FOREIGN KEY (purch_lot_no) REFERENCES purchasing.purchase_lots(lot_number) ON DELETE SET NULL'],
@@ -5375,6 +6249,7 @@ DECLARE
         ARRAY['fk_tandr_agent',           'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_agent FOREIGN KEY (agent_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         ARRAY['fk_tandr_buyer',           'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_buyer FOREIGN KEY (buyer_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
         ARRAY['fk_tandr_supplier',        'ALTER TABLE finance.tandr_buying_details ADD CONSTRAINT fk_tandr_supplier FOREIGN KEY (supplier_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        ARRAY['fk_dispatch_buyer',        'ALTER TABLE operations.transport_dispatches ADD CONSTRAINT fk_dispatch_buyer FOREIGN KEY (buyer_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
         ARRAY['fk_accumfeed_cow',         'ALTER TABLE finance.beast_accumed_feed_by_commodity ADD CONSTRAINT fk_accumfeed_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_accumfeed_beast',       'ALTER TABLE finance.beast_accumed_feed_by_commodity ADD CONSTRAINT fk_accumfeed_beast FOREIGN KEY (beast_id) REFERENCES cattle.cows(id) ON DELETE RESTRICT'],
         ARRAY['fk_accumfeed_commod',      'ALTER TABLE finance.beast_accumed_feed_by_commodity ADD CONSTRAINT fk_accumfeed_commod FOREIGN KEY (commodity_code) REFERENCES commodity.commodities(commodity_code) ON DELETE RESTRICT'],
@@ -5425,6 +6300,8 @@ DECLARE
         -- pen_id FKs for previously orphaned columns — all → pen.pens(id) (unified table)
         ARRAY['fk_dual_ration_pen',       'ALTER TABLE feed.dual_ration_feeding ADD CONSTRAINT fk_dual_ration_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_titration_regime_pen',  'ALTER TABLE feed.titration_ration_regimes ADD CONSTRAINT fk_titration_regime_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        -- LSJH-456: assigned named titration regime → feed.titration_regimes
+        ARRAY['fk_pens_titration_regime', 'ALTER TABLE pen.pens ADD CONSTRAINT fk_pens_titration_regime FOREIGN KEY (titration_regime_id) REFERENCES feed.titration_regimes(id) ON DELETE SET NULL'],
         ARRAY['fk_pen_bunk_cleaning_pen', 'ALTER TABLE feed.pen_and_bunk_cleaning ADD CONSTRAINT fk_pen_bunk_cleaning_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_nsa_bunk_pen',          'ALTER TABLE feed.nsa_bunk_data ADD CONSTRAINT fk_nsa_bunk_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         -- OG web-app tables → pen.pens(id)
@@ -5435,7 +6312,236 @@ DECLARE
 BEGIN
     FOR _i IN 1..array_length(_fks, 1) LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = _fks[_i][1]) THEN
-            EXECUTE _fks[_i][2];
+            -- Per-FK subtransaction. A constraint that can't validate against
+            -- existing data (e.g. orphaned legacy rows → SQLSTATE 23503) must NOT
+            -- abort the entire schema apply: the whole file runs as one implicit
+            -- transaction, so a single failing ADD CONSTRAINT here otherwise rolls
+            -- back every preceding statement too. That is exactly how legacy farm
+            -- DBs ended up missing the schema's whole tail (cfr_id, cfr_sync_state,
+            -- the feeding_* columns, …). Skip-and-warn instead; the FK can be added
+            -- later once the offending data is reconciled.
+            BEGIN
+                EXECUTE _fks[_i][2];
+            EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'schema-farm-v5: skipped FK % — %', _fks[_i][1], SQLERRM;
+            END;
+        END IF;
+    END LOOP;
+END
+$$;
+
+
+-- ████████████████████████████████████████████████████████████████
+-- ██  FK REPAIR — wrong-column constraints from the LSJH-410/404 wave
+-- ██  Four FKs below originally targeted the nullable legacy ETL keys
+-- ██  (contacts.contact_id / drugs.drug_id) where the app writes serial ids
+-- ██  (validated via contacts.id / drugs.id, joined d.id = rec.drug_id) —
+-- ██  every app write then 500'd with a 23503, and the SET-NULL cleanup
+-- ██  destroyed valid app-written supplier links. The _fks2 guard matches
+-- ██  conname only, so DBs that already carry the wrong-target constraint
+-- ██  are never corrected by re-running the block. This block runs on every
+-- ██  apply (initFarmDb applies this file to all farm DBs at each boot):
+-- ██    1. DROP each constraint iff it currently targets the wrong column
+-- ██    2. restore drug-purchase supplier_ids nulled by the old cleanup
+-- ██       (the V2 mirror drugs_purchase_event, same id, kept the value)
+-- ██    3. remap legacy-space values onto the serial id
+-- ██  The corrected _fks2 entries below then re-ADD the right constraint.
+-- ████████████████████████████████████████████████████████████████
+
+DO $$
+DECLARE
+    _fix TEXT[][] := ARRAY[
+        ARRAY['fk_drug_purch_supplier', 'health.drug_purchase_events', 'contact_id'],
+        ARRAY['fk_weighbridge_carrier', 'operations.weighbridge_dockets', 'contact_id'],
+        ARRAY['fk_drug_stk_rec_drug',   'health.drug_stocktake_records', 'drug_id'],
+        ARRAY['fk_drug_xfer_rec_drug',  'health.drug_transfer_records',  'drug_id'],
+        ARRAY['fk_drugs_given_drug',    'health.drugs_given',            'drug_id']
+    ];
+    _i INT;
+    _target TEXT;
+BEGIN
+    FOR _i IN 1..array_length(_fix, 1) LOOP
+        SELECT a.attname INTO _target
+          FROM pg_constraint c
+          JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = ANY (c.confkey)
+         WHERE c.conname = _fix[_i][1]
+         LIMIT 1;
+        IF _target = _fix[_i][3] THEN
+            BEGIN
+                EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', _fix[_i][2], _fix[_i][1]);
+                RAISE NOTICE 'fk-repair: dropped % (targeted legacy column %)', _fix[_i][1], _target;
+            EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'fk-repair: could not drop % — %', _fix[_i][1], SQLERRM;
+            END;
+        END IF;
+        _target := NULL;
+    END LOOP;
+
+    -- Data repairs run ONLY while the corrected constraint is still absent (the
+    -- boot that transitions it) — once it exists the column is guaranteed clean,
+    -- so this avoids rescanning big tables and post-FK warning spam every boot.
+
+    -- drug purchases (mixed app+ETL column, converge on contacts.id):
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_drug_purch_supplier') THEN
+        BEGIN
+            -- restore supplier links the old wrong-column cleanup SET NULL'd — the
+            -- V2 mirror row (same id) was written before the cleanup and kept the value
+            UPDATE health.drug_purchase_events e
+               SET supplier_id = m.supplier_id
+              FROM health.drugs_purchase_event m
+             WHERE m.id = e.id AND e.supplier_id IS NULL AND m.supplier_id IS NOT NULL;
+            -- remap legacy CFR values (contact_id space) onto the serial id; values
+            -- already valid as an app id are left alone (app-written rows)
+            UPDATE health.drug_purchase_events e
+               SET supplier_id = c.id
+              FROM contacts.contacts c
+             WHERE c.contact_id = e.supplier_id
+               AND NOT EXISTS (SELECT 1 FROM contacts.contacts x WHERE x.id = e.supplier_id);
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'fk-repair: drug purchase supplier restore/remap skipped — %', SQLERRM;
+        END;
+    END IF;
+
+    -- weighbridge carrier_id (app-only writers): remap any legacy-shaped values
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_weighbridge_carrier') THEN
+        BEGIN
+            UPDATE operations.weighbridge_dockets w
+               SET carrier_id = c.id
+              FROM contacts.contacts c
+             WHERE c.contact_id = w.carrier_id
+               AND NOT EXISTS (SELECT 1 FROM contacts.contacts x WHERE x.id = w.carrier_id);
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'fk-repair: weighbridge carrier remap skipped — %', SQLERRM;
+        END;
+    END IF;
+
+    -- stocktake/transfer drug_id (app-only tables): remap rows stuck in legacy
+    -- drugs.drug_id space so the RESTRICT re-ADD below doesn't skip on orphans
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_drug_stk_rec_drug')
+       OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_drug_xfer_rec_drug') THEN
+        BEGIN
+            UPDATE health.drug_stocktake_records r
+               SET drug_id = d.id
+              FROM health.drugs d
+             WHERE d.drug_id = r.drug_id
+               AND NOT EXISTS (SELECT 1 FROM health.drugs x WHERE x.id = r.drug_id);
+            UPDATE health.drug_transfer_records r
+               SET drug_id = d.id
+              FROM health.drugs d
+             WHERE d.drug_id = r.drug_id
+               AND NOT EXISTS (SELECT 1 FROM health.drugs x WHERE x.id = r.drug_id);
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'fk-repair: drug stocktake/transfer remap skipped — %', SQLERRM;
+        END;
+    END IF;
+
+    -- drugs_given.drug_id (LSJH-531): app writers insert drugs.id and all readers
+    -- join d.id = dg.drug_id, but the ETL copies raw CFR Drug_IDs (drugs.drug_id
+    -- space). Converge on id: remap CFR-space values via the drugs.drug_id lookup
+    -- (values already valid as an app id are left alone — migrated rows whose CFR
+    -- id collides with a serial id are indistinguishable from app rows and keep
+    -- today's behaviour), null truly-dangling refs, then ADD the corrected FK
+    -- directly (the _fks block above already ran this apply and skipped it).
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_drugs_given_drug') THEN
+        BEGIN
+            UPDATE health.drugs_given g
+               SET drug_id = d.id
+              FROM health.drugs d
+             WHERE d.drug_id = g.drug_id
+               AND NOT EXISTS (SELECT 1 FROM health.drugs x WHERE x.id = g.drug_id);
+            UPDATE health.drugs_given
+               SET drug_id = NULL
+             WHERE drug_id IS NOT NULL
+               AND drug_id NOT IN (SELECT id FROM health.drugs);
+            ALTER TABLE health.drugs_given
+              ADD CONSTRAINT fk_drugs_given_drug FOREIGN KEY (drug_id)
+              REFERENCES health.drugs(id) ON DELETE SET NULL;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'fk-repair: drugs_given remap/re-add skipped — %', SQLERRM;
+        END;
+    END IF;
+END
+$$;
+
+
+-- ████████████████████████████████████████████████████████████████
+-- ██  FOREIGN KEYS — audited gap list (LSJH-410 / LSJH-404)
+-- ██  From docs/db-fk-audit.md. 3-element entries [name, cleanup, ddl]:
+-- ██  SET NULL FKs run a null-orphan cleanup first so pre-existing dangling
+-- ██  values don't abort the ADD; RESTRICT/CASCADE entries have empty cleanup
+-- ██  (skip+warn if orphans — reconcile per the audit). Same per-FK
+-- ██  subtransaction skip-on-error guard as the block above, so a bad/absent
+-- ██  column is a logged no-op, never a corrupting or aborting change.
+-- ██  NOTE: the feed.* pen_number_id/ration_code FKs must also be mirrored into
+-- ██  the standalone c:\Github\lsj-migration schema copy (see audit caveat).
+-- ████████████████████████████████████████████████████████████████
+
+DO $$
+DECLARE
+    _fks2 TEXT[][] := ARRAY[
+        -- cows pilot gaps (LSJH-404) — SET NULL
+        ARRAY['fk_cows_trial_no', 'UPDATE cattle.cows SET trial_no_id = NULL WHERE trial_no_id IS NOT NULL AND trial_no_id NOT IN (SELECT id FROM cattle.trial_description WHERE id IS NOT NULL)', 'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_trial_no FOREIGN KEY (trial_no_id) REFERENCES cattle.trial_description(id) ON DELETE SET NULL'],
+        ARRAY['fk_cows_loc_type', 'UPDATE cattle.cows SET current_loc_type_id = NULL WHERE current_loc_type_id IS NOT NULL AND current_loc_type_id NOT IN (SELECT id FROM cattle.location_types WHERE id IS NOT NULL)', 'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_loc_type FOREIGN KEY (current_loc_type_id) REFERENCES cattle.location_types(id) ON DELETE SET NULL'],
+        -- supplier / contact links → contacts.contacts(contact_id), SET NULL
+        -- supplier_id is app-written validated against contacts.id (drug-purchases.js
+        -- validateContactExists); legacy ETL values are remapped to id-space by the
+        -- fk-repair block above — so the FK targets the serial PK, NOT contact_id.
+        ARRAY['fk_drug_purch_supplier', 'UPDATE health.drug_purchase_events SET supplier_id = NULL WHERE supplier_id IS NOT NULL AND supplier_id NOT IN (SELECT id FROM contacts.contacts)', 'ALTER TABLE health.drug_purchase_events ADD CONSTRAINT fk_drug_purch_supplier FOREIGN KEY (supplier_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
+        ARRAY['fk_commodtrans_supplier', 'UPDATE commodity.commodtrans SET supplier_id = NULL WHERE supplier_id IS NOT NULL AND supplier_id NOT IN (SELECT contact_id FROM contacts.contacts WHERE contact_id IS NOT NULL)', 'ALTER TABLE commodity.commodtrans ADD CONSTRAINT fk_commodtrans_supplier FOREIGN KEY (supplier_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        -- supplier_id lives on carcase_feedback_report_data (nullable), NOT carcase_import_data
+        ARRAY['fk_carc_feedbackrpt_supplier', 'UPDATE carcase.carcase_feedback_report_data SET supplier_id = NULL WHERE supplier_id IS NOT NULL AND supplier_id NOT IN (SELECT contact_id FROM contacts.contacts WHERE contact_id IS NOT NULL)', 'ALTER TABLE carcase.carcase_feedback_report_data ADD CONSTRAINT fk_carc_feedbackrpt_supplier FOREIGN KEY (supplier_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        -- carc_feedback_compliance.supplier_id is NOT NULL → RESTRICT (cannot SET NULL); no null-cleanup
+        ARRAY['fk_carc_feedback_supplier', '', 'ALTER TABLE carcase.carc_feedback_compliance ADD CONSTRAINT fk_carc_feedback_supplier FOREIGN KEY (supplier_id) REFERENCES contacts.contacts(contact_id) ON DELETE RESTRICT'],
+        ARRAY['fk_carcase_abattoir_contact', 'UPDATE carcase.carcase_data SET abattoir_contact_id = NULL WHERE abattoir_contact_id IS NOT NULL AND abattoir_contact_id NOT IN (SELECT contact_id FROM contacts.contacts WHERE contact_id IS NOT NULL)', 'ALTER TABLE carcase.carcase_data ADD CONSTRAINT fk_carcase_abattoir_contact FOREIGN KEY (abattoir_contact_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        -- carrier_id has app-only writers keyed by contacts.id — same repair as supplier_id.
+        ARRAY['fk_weighbridge_carrier', 'UPDATE operations.weighbridge_dockets SET carrier_id = NULL WHERE carrier_id IS NOT NULL AND carrier_id NOT IN (SELECT id FROM contacts.contacts)', 'ALTER TABLE operations.weighbridge_dockets ADD CONSTRAINT fk_weighbridge_carrier FOREIGN KEY (carrier_id) REFERENCES contacts.contacts(id) ON DELETE SET NULL'],
+        ARRAY['fk_rvrcti_vendor', 'UPDATE finance.rv_rcti_data SET vendor_id = NULL WHERE vendor_id IS NOT NULL AND vendor_id NOT IN (SELECT contact_id FROM contacts.contacts WHERE contact_id IS NOT NULL)', 'ALTER TABLE finance.rv_rcti_data ADD CONSTRAINT fk_rvrcti_vendor FOREIGN KEY (vendor_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
+        -- truck links → transport.truck_names(id), SET NULL
+        ARRAY['fk_dockets_truck', 'UPDATE transport.deliverydockets SET truck_id = NULL WHERE truck_id IS NOT NULL AND truck_id NOT IN (SELECT id FROM transport.truck_names WHERE id IS NOT NULL)', 'ALTER TABLE transport.deliverydockets ADD CONSTRAINT fk_dockets_truck FOREIGN KEY (truck_id) REFERENCES transport.truck_names(id) ON DELETE SET NULL'],
+        ARRAY['fk_truckloads_truck', 'UPDATE transport.truck_loads SET truck_id = NULL WHERE truck_id IS NOT NULL AND truck_id NOT IN (SELECT id FROM transport.truck_names WHERE id IS NOT NULL)', 'ALTER TABLE transport.truck_loads ADD CONSTRAINT fk_truckloads_truck FOREIGN KEY (truck_id) REFERENCES transport.truck_names(id) ON DELETE SET NULL'],
+        ARRAY['fk_datakey_truck', 'UPDATE transport.datakey_truck_allocation SET truck_id = NULL WHERE truck_id IS NOT NULL AND truck_id NOT IN (SELECT id FROM transport.truck_names WHERE id IS NOT NULL)', 'ALTER TABLE transport.datakey_truck_allocation ADD CONSTRAINT fk_datakey_truck FOREIGN KEY (truck_id) REFERENCES transport.truck_names(id) ON DELETE SET NULL'],
+        -- feed-domain pen mirror → pen.pens(id), SET NULL
+        ARRAY['fk_feeding_details_pen', 'UPDATE feed.feeding_details SET pen_number_id = NULL WHERE pen_number_id IS NOT NULL AND pen_number_id NOT IN (SELECT id FROM pen.pens WHERE id IS NOT NULL)', 'ALTER TABLE feed.feeding_details ADD CONSTRAINT fk_feeding_details_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_feeding_regimens_pen', 'UPDATE feed.feeding_regimens SET pen_number_id = NULL WHERE pen_number_id IS NOT NULL AND pen_number_id NOT IN (SELECT id FROM pen.pens WHERE id IS NOT NULL)', 'ALTER TABLE feed.feeding_regimens ADD CONSTRAINT fk_feeding_regimens_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_pen_feeds_temp_pen', 'UPDATE feed.pen_feeds_temp SET pen_number_id = NULL WHERE pen_number_id IS NOT NULL AND pen_number_id NOT IN (SELECT id FROM pen.pens WHERE id IS NOT NULL)', 'ALTER TABLE feed.pen_feeds_temp ADD CONSTRAINT fk_pen_feeds_temp_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_pen_data_feeddb_pen', 'UPDATE feed.pen_data_from_feed_db SET pen_number_id = NULL WHERE pen_number_id IS NOT NULL AND pen_number_id NOT IN (SELECT id FROM pen.pens WHERE id IS NOT NULL)', 'ALTER TABLE feed.pen_data_from_feed_db ADD CONSTRAINT fk_pen_data_feeddb_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_feeddb_pens_file_pen', 'UPDATE feed.feeddb_pens_file SET pen_number_id = NULL WHERE pen_number_id IS NOT NULL AND pen_number_id NOT IN (SELECT id FROM pen.pens WHERE id IS NOT NULL)', 'ALTER TABLE feed.feeddb_pens_file ADD CONSTRAINT fk_feeddb_pens_file_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_penshistory_pen', 'UPDATE pen.penshistory SET pen_number_id = NULL WHERE pen_number_id IS NOT NULL AND pen_number_id NOT IN (SELECT id FROM pen.pens WHERE id IS NOT NULL)', 'ALTER TABLE pen.penshistory ADD CONSTRAINT fk_penshistory_pen FOREIGN KEY (pen_number_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        -- feed-domain ration mirror → feed.rations(ration_code), SET NULL
+        ARRAY['fk_feeding_details_ration', 'UPDATE feed.feeding_details SET ration_code = NULL WHERE ration_code IS NOT NULL AND ration_code NOT IN (SELECT ration_code FROM feed.rations WHERE ration_code IS NOT NULL)', 'ALTER TABLE feed.feeding_details ADD CONSTRAINT fk_feeding_details_ration FOREIGN KEY (ration_code) REFERENCES feed.rations(ration_code) ON DELETE SET NULL'],
+        ARRAY['fk_costsfeed_ration', 'UPDATE finance.costs_feed_detail SET ration_code = NULL WHERE ration_code IS NOT NULL AND ration_code NOT IN (SELECT ration_code FROM feed.rations WHERE ration_code IS NOT NULL)', 'ALTER TABLE finance.costs_feed_detail ADD CONSTRAINT fk_costsfeed_ration FOREIGN KEY (ration_code) REFERENCES feed.rations(ration_code) ON DELETE SET NULL'],
+        -- finance lot links → purchasing.purchase_lots(lot_number), SET NULL
+        ARRAY['fk_rvrcti_lot', 'UPDATE finance.rv_rcti_data SET purch_lot_no = NULL WHERE purch_lot_no IS NOT NULL AND purch_lot_no NOT IN (SELECT lot_number FROM purchasing.purchase_lots WHERE lot_number IS NOT NULL)', 'ALTER TABLE finance.rv_rcti_data ADD CONSTRAINT fk_rvrcti_lot FOREIGN KEY (purch_lot_no) REFERENCES purchasing.purchase_lots(lot_number) ON DELETE SET NULL'],
+        ARRAY['fk_custfeedcharges_lot', 'UPDATE finance.custom_feed_charges SET purch_lot_no = NULL WHERE purch_lot_no IS NOT NULL AND purch_lot_no NOT IN (SELECT lot_number FROM purchasing.purchase_lots WHERE lot_number IS NOT NULL)', 'ALTER TABLE finance.custom_feed_charges ADD CONSTRAINT fk_custfeedcharges_lot FOREIGN KEY (purch_lot_no) REFERENCES purchasing.purchase_lots(lot_number) ON DELETE SET NULL'],
+        ARRAY['fk_costsfeed_lot', 'UPDATE finance.costs_feed_detail SET purch_lot_no = NULL WHERE purch_lot_no IS NOT NULL AND purch_lot_no NOT IN (SELECT lot_number FROM purchasing.purchase_lots WHERE lot_number IS NOT NULL)', 'ALTER TABLE finance.costs_feed_detail ADD CONSTRAINT fk_costsfeed_lot FOREIGN KEY (purch_lot_no) REFERENCES purchasing.purchase_lots(lot_number) ON DELETE SET NULL'],
+        ARRAY['fk_livestockwb_lot', 'UPDATE weighing.livestock_weighbridge_dockets SET lot_number = NULL WHERE lot_number IS NOT NULL AND lot_number NOT IN (SELECT lot_number FROM purchasing.purchase_lots WHERE lot_number IS NOT NULL)', 'ALTER TABLE weighing.livestock_weighbridge_dockets ADD CONSTRAINT fk_livestockwb_lot FOREIGN KEY (lot_number) REFERENCES purchasing.purchase_lots(lot_number) ON DELETE SET NULL'],
+        -- locations, SET NULL
+        ARRAY['fk_manurecart_from', 'UPDATE transport.manure_carting SET from_location_id = NULL WHERE from_location_id IS NOT NULL AND from_location_id NOT IN (SELECT id FROM transport.manure_locations WHERE id IS NOT NULL)', 'ALTER TABLE transport.manure_carting ADD CONSTRAINT fk_manurecart_from FOREIGN KEY (from_location_id) REFERENCES transport.manure_locations(id) ON DELETE SET NULL'],
+        ARRAY['fk_manurecart_to', 'UPDATE transport.manure_carting SET to_location_id = NULL WHERE to_location_id IS NOT NULL AND to_location_id NOT IN (SELECT id FROM transport.manure_locations WHERE id IS NOT NULL)', 'ALTER TABLE transport.manure_carting ADD CONSTRAINT fk_manurecart_to FOREIGN KEY (to_location_id) REFERENCES transport.manure_locations(id) ON DELETE SET NULL'],
+        ARRAY['fk_weighbridge_lot', 'UPDATE operations.weighbridge_dockets SET purchase_lot_id = NULL WHERE purchase_lot_id IS NOT NULL AND purchase_lot_id NOT IN (SELECT id FROM purchasing.purchase_lots WHERE id IS NOT NULL)', 'ALTER TABLE operations.weighbridge_dockets ADD CONSTRAINT fk_weighbridge_lot FOREIGN KEY (purchase_lot_id) REFERENCES purchasing.purchase_lots(id) ON DELETE SET NULL'],
+        -- header → detail (CASCADE) and master lookups (RESTRICT) — no auto-cleanup; skip+warn if orphaned
+        ARRAY['fk_brd_symptoms_sb', '', 'ALTER TABLE health.sick_beast_brd_symptoms ADD CONSTRAINT fk_brd_symptoms_sb FOREIGN KEY (sb_rec_no) REFERENCES health.sick_beast_records(sb_rec_no) ON DELETE CASCADE'],
+        ARRAY['fk_truckloadchanges_load', '', 'ALTER TABLE transport.truckloadchangeslog ADD CONSTRAINT fk_truckloadchanges_load FOREIGN KEY (truck_load_id) REFERENCES transport.truck_loads(id) ON DELETE CASCADE'],
+        ARRAY['fk_truckloadvar_load', '', 'ALTER TABLE transport.truck_load_variation_data ADD CONSTRAINT fk_truckloadvar_load FOREIGN KEY (truck_load_id) REFERENCES transport.truck_loads(id) ON DELETE CASCADE'],
+        ARRAY['fk_loaddockages_docket', '', 'ALTER TABLE transport.loaddockages ADD CONSTRAINT fk_loaddockages_docket FOREIGN KEY (docket_id) REFERENCES transport.deliverydockets(id) ON DELETE CASCADE'],
+        ARRAY['fk_commodtrans_commodity', '', 'ALTER TABLE commodity.commodtrans ADD CONSTRAINT fk_commodtrans_commodity FOREIGN KEY (commodity_code) REFERENCES commodity.commodities(commodity_code) ON DELETE RESTRICT'],
+        ARRAY['fk_commodtrans_reason', 'UPDATE commodity.commodtrans SET reason_code = NULL WHERE reason_code IS NOT NULL AND reason_code NOT IN (SELECT reason_id FROM commodity.reason_codes WHERE reason_id IS NOT NULL)', 'ALTER TABLE commodity.commodtrans ADD CONSTRAINT fk_commodtrans_reason FOREIGN KEY (reason_code) REFERENCES commodity.reason_codes(reason_id) ON DELETE SET NULL'],
+        -- stocktake/transfer records are app-only tables: routes validate via drugs.id and
+        -- readers JOIN drugs d ON d.id = rec.drug_id — so the FK targets the serial PK, NOT
+        -- the nullable legacy drugs.drug_id ETL key (app-created drugs have drug_id NULL).
+        ARRAY['fk_drug_stk_rec_drug', '', 'ALTER TABLE health.drug_stocktake_records ADD CONSTRAINT fk_drug_stk_rec_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(id) ON DELETE RESTRICT'],
+        ARRAY['fk_drug_xfer_rec_drug', '', 'ALTER TABLE health.drug_transfer_records ADD CONSTRAINT fk_drug_xfer_rec_drug FOREIGN KEY (drug_id) REFERENCES health.drugs(id) ON DELETE RESTRICT']
+    ];
+    _i INT;
+BEGIN
+    FOR _i IN 1..COALESCE(array_length(_fks2, 1), 0) LOOP
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = _fks2[_i][1]) THEN
+            BEGIN
+                IF length(_fks2[_i][2]) > 0 THEN EXECUTE _fks2[_i][2]; END IF;
+                EXECUTE _fks2[_i][3];
+            EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'schema-farm-v5: skipped audited FK % — %', _fks2[_i][1], SQLERRM;
+            END;
         END IF;
     END LOOP;
 END
@@ -5599,7 +6705,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_bunk_sessions_date_type
 
 ALTER TABLE operations.bunk_call_entries
     ADD COLUMN IF NOT EXISTS score   INTEGER,
-    ADD COLUMN IF NOT EXISTS call_kg NUMERIC(10,2);
+    ADD COLUMN IF NOT EXISTS call_kg NUMERIC(10,2),
+    -- Provenance for CFR-rating adoption (LSJH-405): 'rider' | 'cfr' | NULL(=rider).
+    ADD COLUMN IF NOT EXISTS origin  TEXT;
 
 UPDATE operations.bunk_call_entries
    SET score = COALESCE(score, bunk_score)
@@ -5764,14 +6872,37 @@ DECLARE
     'digistar.digistar_data_history', 'digistar.digistar_users'
   ];
   _trg_name TEXT;
+  _schema   TEXT;
+  _table    TEXT;
+  _has_col  BOOLEAN;
 BEGIN
   FOREACH _tbl IN ARRAY _tables LOOP
     _trg_name := 'trg_' || replace(_tbl, '.', '_') || '_updated_at';
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = _trg_name) THEN
-      EXECUTE format(
-        'CREATE TRIGGER %I BEFORE UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION public.set_updated_at()',
-        _trg_name, _tbl
-      );
+    -- Only attach the trigger when the target table actually has an
+    -- updated_at column. set_updated_at() does NEW.updated_at = NOW(), which
+    -- raises "record \"new\" has no field \"updated_at\"" at first UPDATE if
+    -- the column is missing (e.g. operations.nlis_transfers).
+    _schema := split_part(_tbl, '.', 1);
+    _table  := split_part(_tbl, '.', 2);
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = _schema AND table_name = _table AND column_name = 'updated_at'
+    ) INTO _has_col;
+    IF _has_col THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = _trg_name) THEN
+        EXECUTE format(
+          'CREATE TRIGGER %I BEFORE UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION public.set_updated_at()',
+          _trg_name, _tbl
+        );
+      END IF;
+    ELSE
+      -- Drop any pre-existing trigger that was created by an earlier schema
+      -- pass before this column-existence guard was added. Without this,
+      -- column-less tables (e.g. operations.nlis_transfers) error on every
+      -- UPDATE with "record \"new\" has no field \"updated_at\"".
+      IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = _trg_name) THEN
+        EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', _trg_name, _tbl);
+      END IF;
     END IF;
   END LOOP;
 END
@@ -5807,3 +6938,101 @@ COMMIT;
 -- ██  120+ indexes (FK, search, partial, composite)
 -- ██  updated_at triggers on all tables with the column
 -- ████████████████████████████████████████████████████████████████
+
+-- ████████████████████████████████████████████████████████████████
+-- ██  LSJH-346 — ear-tag uniqueness (ACTIVE cattle only)
+-- ████████████████████████████████████████████████████████████████
+-- Ear tags are legitimately reused across HISTORIC animals (sold/died/
+-- archived — CFR-migrated boxes carry such rows that must never be mutated),
+-- so uniqueness is enforced for active cattle only via a partial index.
+-- Self-deploying + skip-and-warn: a box that still has active-status
+-- duplicates logs a WARNING instead of crashing boot, stays index-less, and
+-- self-heals on the next boot after scripts/dedupe-ear-tags.js has been run
+-- (Reconcile → "Duplicate Ear Tags" lists offenders). Consumers: the POST
+-- /api/cows 23505→409 branch and generate-records' ON CONFLICT both key off
+-- this index.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE schemaname = 'cattle' AND indexname = 'uq_cows_ear_tag_active'
+  ) THEN
+    BEGIN
+      CREATE UNIQUE INDEX uq_cows_ear_tag_active
+          ON cattle.cows(ear_tag) WHERE status = 'active';
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'LSJH-346: uq_cows_ear_tag_active skipped (active-status duplicate ear tags present? run scripts/dedupe-ear-tags.js) — %', SQLERRM;
+    END;
+  END IF;
+END $$;
+
+-- LSJH-673 — active-only EID (NLIS RFID) uniqueness, the ear_tag fix's sibling.
+-- The scanner hot path resolves animals via REPLACE(eid, ' ', '') = $1 LIMIT 1
+-- (animal-lookup.js, dispatch.js, collect-rfids.js): with duplicate active EIDs
+-- that LIMIT 1 picks an arbitrary animal and TPR crush-cycle weighing then
+-- writes weights against it. Two indexes, two jobs:
+--   idx_cows_eid_norm   — plain expression index on the normalized EID; serves
+--                         all three lookups (incl. dispatch's any-status query;
+--                         the plain idx_cows_eid can't serve a REPLACE() match).
+--   uq_cows_eid_active  — partial unique for integrity among active cattle.
+-- Same skip-and-warn deploy as uq_cows_ear_tag_active above: run
+-- scripts/dedupe-eids.js on a box that warns; the index lands on its next boot.
+CREATE INDEX IF NOT EXISTS idx_cows_eid_norm ON cattle.cows ((REPLACE(eid, ' ', '')));
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE schemaname = 'cattle' AND indexname = 'uq_cows_eid_active'
+  ) THEN
+    BEGIN
+      -- Predicate normalizes too: a whitespace-only eid ('  ') passes
+      -- eid <> '' but indexes as '' and would collide with every other
+      -- blank-ish EID — exclude on the normalized value.
+      CREATE UNIQUE INDEX uq_cows_eid_active
+          ON cattle.cows ((REPLACE(eid, ' ', '')))
+       WHERE status = 'active' AND eid IS NOT NULL AND REPLACE(eid, ' ', '') <> '';
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'LSJH-673: uq_cows_eid_active skipped (active-status duplicate EIDs present? run scripts/dedupe-eids.js) — %', SQLERRM;
+    END;
+  END IF;
+END $$;
+
+-- LSJH-663 — one feed running-total row per (beast, revexp, ration). The
+-- apply-feed engine keeps a per-beast per-ration aggregate in finance.costs
+-- (CFR: "Costs holds one running total per beast per ration") via
+-- UPDATE-then-INSERT; without this arbiter a past race could mint duplicates,
+-- after which every later UPDATE increments ALL of them (feed cost
+-- double-counts in every P&L). Scoped to the aggregate shape only (cow_id and
+-- ration both set) — other cost rows are untouched. Skip-and-warn like the
+-- indexes above: run scripts/dedupe-feed-cost-aggregates.js on a box that
+-- warns, and the index lands on its next boot. The engine itself is also
+-- serialized by an advisory lock (services/feed/apply-feed.js).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE schemaname = 'finance' AND indexname = 'uq_costs_feed_aggregate'
+  ) THEN
+    BEGIN
+      CREATE UNIQUE INDEX uq_costs_feed_aggregate
+          ON finance.costs (cow_id, revexp_code, ration)
+       WHERE cow_id IS NOT NULL AND ration IS NOT NULL;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'LSJH-663: uq_costs_feed_aggregate skipped (duplicate per-beast feed aggregates present? run scripts/dedupe-feed-cost-aggregates.js) — %', SQLERRM;
+    END;
+  END IF;
+END $$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- TOOL-ONLY round-trip mirror columns (NOT part of canonical LSJ-HUB schema).
+-- The migration writes the RAW legacy value into these alongside the derived
+-- structured column (e.g. cows.status is derived from Died, but cows.died keeps
+-- the raw bit), preserving a full round-trip of the CFR source. The app never
+-- reads them; they are additive + idempotent. **KEEP THIS BLOCK when re-syncing
+-- schema-farm-v6.sql wholesale from canonical LSJ-HUB** (it is intentionally not
+-- upstream). Verified needed by `node migrate.js --check-mappings`.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE cattle.cows        ADD COLUMN IF NOT EXISTS purch_lot_no VARCHAR(20) NULL;
+ALTER TABLE cattle.cows        ADD COLUMN IF NOT EXISTS died         BOOLEAN     NULL;
+ALTER TABLE cattle.cows        ADD COLUMN IF NOT EXISTS pen_number   VARCHAR(20) NULL;
+ALTER TABLE health.drugs_given ADD COLUMN IF NOT EXISTS beastid      INTEGER     NULL;

@@ -2,6 +2,10 @@
 
 Standalone CLI tool for migrating the legacy CATTLE database (SQL Server) to PostgreSQL for LSJ-HUB.
 
+> **Migrating one customer onto their VPS?** Follow **[RUNBOOK-vps-single-farm.md](RUNBOOK-vps-single-farm.md)**
+> — the end-to-end single-farm procedure (schema, migrate, validate, **required dedupe**,
+> **system-DB bootstrap**, boot). The `Usage` list below is the command reference.
+
 ## What It Does
 
 - **171 legacy tables** categorised into 3 strategies:
@@ -63,7 +67,8 @@ Requires a running PostgreSQL instance (creates/drops `lsj_migration_test` datab
 | `categories.js` | 171-table categorisation (mapped/raw/excluded) |
 | `mappings.js` | Column-level mapping definitions + transform helpers |
 | `runner.js` | Core migration engine (pagination, batching, validation) |
-| `schema-farm.sql` | PostgreSQL target schema |
+| `schema-farm-v6.sql` | PostgreSQL target farm-DB schema |
+| `schema-system.sql` | PostgreSQL system-DB schema (users, farms, registry) |
 
 ## Environment Variables
 
