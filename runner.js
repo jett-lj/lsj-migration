@@ -319,6 +319,15 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
   }
   const sortedOrders = [...orderGroups.keys()].sort((a, b) => a - b);
 
+  // Disable the ear-tag sync trigger during the bulk load. Per-row firing would
+  // (a) make the LAST-loaded cow the active holder of a reused tag rather than the
+  // current one, and (b) 23505-reject the 2nd+ active cow sharing a tag (dropping
+  // legitimately-reused rows). deriveEarTagAssignments builds the assignments in
+  // one authoritative ranked pass afterward; the trigger is re-enabled then.
+  if (!dryRun) {
+    await setEarTagTrigger(pgPool, false, log);
+  }
+
   for (const order of sortedOrders) {
     const group = orderGroups.get(order);
 
@@ -570,6 +579,13 @@ async function runMigration(mssqlPoolOrPools, pgPool, opts = {}) {
   // Build app-space treatment regimes from the CFR mirror rows (LSJH-532)
   if (!dryRun) {
     await convertTreatmentRegimes(pgPool, log);
+  }
+
+  // Derive ear-tag assignments from the loaded cows (authoritative first build,
+  // trigger was disabled during load), then re-enable the trigger for runtime.
+  if (!dryRun) {
+    await deriveEarTagAssignments(pgPool, log);
+    await setEarTagTrigger(pgPool, true, log);
   }
 
   log.info('Migration complete.');
@@ -1296,6 +1312,56 @@ async function convertTreatmentRegimes(pgPool, log) {
   );
 }
 
+// ── Ear-tag assignments ──────────────────────────────
+
+/**
+ * Enable/disable the cattle.sync_ear_tag_assignment trigger. Disabled during the
+ * bulk load (see runMigration) so it doesn't build wrong-active rows in load order
+ * or 23505-reject reused-tag cows; re-enabled after the derivation for runtime.
+ */
+async function setEarTagTrigger(pgPool, enable, log) {
+  try {
+    await pgPool.query(
+      `ALTER TABLE cattle.cows ${enable ? 'ENABLE' : 'DISABLE'} TRIGGER trg_cows_sync_ear_tag_assignment`,
+    );
+    log.info(`  Ear-tag sync trigger ${enable ? 're-enabled for runtime' : 'disabled for bulk load'}`);
+  } catch (e) {
+    log.warn(`  Could not ${enable ? 'enable' : 'disable'} ear-tag sync trigger: ${e.message}`);
+  }
+}
+
+/**
+ * Derive cattle.ear_tag_assignments from the loaded cows — the authoritative first
+ * build (the sync trigger is disabled during load). The current holder of each tag
+ * = its most-recent status='active' cow (ranked); every other cow for that tag
+ * gets a DEACTIVATED assignment (reason=status, or 'dedup' for a duplicate active).
+ * Exactly one active assignment per tag, so uq_ear_tag_assignment_active builds
+ * cleanly. Mirrors the app's initFarmDb boot backfill; idempotent (skips cows that
+ * already have an assignment).
+ */
+async function deriveEarTagAssignments(pgPool, log) {
+  const { rowCount } = await pgPool.query(`
+    INSERT INTO cattle.ear_tag_assignments
+      (ear_tag, cow_id, active, assigned_at, deactivated_at, deactivated_reason)
+    SELECT c.ear_tag, c.id,
+           (c.status = 'active' AND c.rnk = 1),
+           COALESCE(c.entry_date::timestamptz, c.start_date::timestamptz, c.created_at),
+           CASE WHEN NOT (c.status = 'active' AND c.rnk = 1)
+                THEN COALESCE(c.date_died, c.sale_date, c.date_archived)::timestamptz END,
+           CASE WHEN c.status <> 'active' THEN c.status
+                WHEN c.rnk > 1 THEN 'dedup' END
+      FROM (
+        SELECT id, ear_tag, status, entry_date, start_date, created_at,
+               date_died, sale_date, date_archived,
+               ROW_NUMBER() OVER (PARTITION BY ear_tag
+                 ORDER BY (status = 'active') DESC, updated_at DESC NULLS LAST, id DESC) AS rnk
+          FROM cattle.cows
+         WHERE ear_tag IS NOT NULL AND ear_tag <> ''
+      ) c
+     WHERE NOT EXISTS (SELECT 1 FROM cattle.ear_tag_assignments a WHERE a.cow_id = c.id)`);
+  log.info(`  Derived ${rowCount} ear-tag assignment(s) from cattle.cows`);
+}
+
 // ── Sequence reset ───────────────────────────────────
 
 /**
@@ -1569,30 +1635,31 @@ async function validateMigration(mssqlPool, pgPool) {
     checks.push({ check: 'Data quality: no null/empty ear_tags', passed: false, detail: err.message });
   }
 
-  // 3b. No duplicate ACTIVE ear tags. LSJ-HUB builds a partial unique index
-  // uq_cows_ear_tag_active ON cattle.cows(ear_tag) WHERE status='active' at first
-  // boot (LSJH-346). If migrated data has >1 active cow sharing a tag, that CREATE
-  // fails, is warn-skipped, and the box stays index-less — after which the app's
-  // ON CONFLICT (ear_tag) WHERE status='active' writers throw 42P10 at runtime.
-  // Deriving cows.status now makes this rare (historic sold/died cows drop out),
-  // but any genuine active duplicate must be resolved before go-live.
+  // 3b. Ear-tag assignment integrity: exactly one ACTIVE assignment per tag.
+  // Active ear-tag uniqueness now lives on cattle.ear_tag_assignments (one active
+  // row per tag), NOT on cows — so cows may legitimately share an active ear_tag
+  // (reuse), which the old uq_cows_ear_tag_active could not tolerate.
+  // deriveEarTagAssignments ranks migrated cows to one active assignment per tag,
+  // so this should always pass post-derivation; a failure means dirty source data
+  // and uq_ear_tag_assignment_active will skip-warn at first app boot — run
+  // LSJ-HUB scripts/dedupe-ear-tags.js before go-live.
   try {
     const res = await pgPool.query(`
       SELECT COUNT(*) AS cnt FROM (
-        SELECT ear_tag FROM cattle.cows
-        WHERE status = 'active' AND ear_tag IS NOT NULL AND ear_tag <> ''
+        SELECT ear_tag FROM cattle.ear_tag_assignments
+        WHERE active
         GROUP BY ear_tag HAVING COUNT(*) > 1
       ) d`);
     const dupTags = parseInt(res.rows[0].cnt);
     checks.push({
-      check: 'Data quality: no duplicate active ear_tags (LSJH-346 index)',
+      check: 'Data quality: one active ear-tag assignment per tag (uq_ear_tag_assignment_active)',
       passed: dupTags === 0,
       detail: dupTags === 0
-        ? 'no duplicate active ear tags'
-        : `${dupTags} ear tag(s) shared by >1 ACTIVE cow — resolve before first app boot (run LSJ-HUB scripts/dedupe-ear-tags.js) or uq_cows_ear_tag_active will be skipped`,
+        ? 'one active assignment per ear tag'
+        : `${dupTags} ear tag(s) have >1 ACTIVE assignment — run LSJ-HUB scripts/dedupe-ear-tags.js before first app boot or uq_ear_tag_assignment_active will be skipped`,
     });
   } catch (err) {
-    checks.push({ check: 'Data quality: no duplicate active ear_tags (LSJH-346 index)', passed: false, detail: err.message });
+    checks.push({ check: 'Data quality: one active ear-tag assignment per tag (uq_ear_tag_assignment_active)', passed: false, detail: err.message });
   }
 
   // 3c. No duplicate ACTIVE EIDs. LSJ-HUB builds a partial unique index

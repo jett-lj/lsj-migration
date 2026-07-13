@@ -321,6 +321,78 @@ CREATE INDEX IF NOT EXISTS idx_cows_vendor ON cattle.cows(vendor_id);
 CREATE INDEX IF NOT EXISTS idx_cows_agent ON cattle.cows(agent_id);
 CREATE INDEX IF NOT EXISTS idx_cows_legacy_beast_id ON cattle.cows(legacy_beast_id);
 
+-- ████████████████████████████████████████████████████████████████
+-- ██  Ear-tag assignments — reuse-aware tag lifecycle
+-- ████████████████████████████████████████████████████████████████
+-- Ear tags are physical tags that are REUSED: a tag moves off a sold/dead animal
+-- onto a new one. cattle.cows.ear_tag stays the animal's current tag (a display/
+-- search field — the scan/identify hot path is EID, not ear_tag). THIS table is
+-- the authoritative record of which cow holds a tag ACTIVE, with full reuse
+-- history (one active row per tag). It supersedes the old cows-level partial
+-- unique uq_cows_ear_tag_active, so a reused tag no longer collides as an active
+-- duplicate on cows (no more `tag~id` rename). cows.status is untouched, so
+-- per-head billing / pen counts / reports are unaffected.
+CREATE TABLE IF NOT EXISTS cattle.ear_tag_assignments (
+  id                 SERIAL PRIMARY KEY,
+  ear_tag            TEXT NOT NULL,
+  cow_id             INTEGER NOT NULL,   -- FK → cattle.cows(id) added in the main _fk DO-block below
+  active             BOOLEAN NOT NULL DEFAULT TRUE,
+  assigned_at        TIMESTAMPTZ,
+  deactivated_at     TIMESTAMPTZ,
+  deactivated_reason TEXT,               -- sold|died|archived|retag|reassigned|dedup|migration|untagged
+  created_at         TIMESTAMPTZ DEFAULT now(),
+  updated_at         TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_ear_tag_assign_cow ON cattle.ear_tag_assignments(cow_id);
+CREATE INDEX IF NOT EXISTS idx_ear_tag_assign_tag ON cattle.ear_tag_assignments(ear_tag);
+
+-- Trigger: maintain ear_tag_assignments from cattle.cows writes, for the app AND
+-- any other writer. A migration BULK load disables this trigger and derives
+-- assignments in one authoritative ranked pass instead (see the migration tool),
+-- because per-row firing during a load would make the last-loaded cow win rather
+-- than the current holder. Runtime collisions (another active cow already holds
+-- the tag) raise 23505 on uq_ear_tag_assignment_active → the cows write aborts →
+-- the route returns 409 (induction/re-tag guard; never a silent tag-steal).
+-- Uses no OLD refs so it is INSERT- and UPDATE-safe without TG_OP guards, and no
+-- ON CONFLICT inference so it does not require the (possibly-skipped) unique index.
+CREATE OR REPLACE FUNCTION cattle.sync_ear_tag_assignment()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status = 'active' AND NEW.ear_tag IS NOT NULL AND NEW.ear_tag <> '' THEN
+    -- retag: free any active assignment this cow holds on a DIFFERENT tag
+    UPDATE cattle.ear_tag_assignments
+       SET active = FALSE, deactivated_at = COALESCE(deactivated_at, now()),
+           deactivated_reason = COALESCE(deactivated_reason, 'retag'), updated_at = now()
+     WHERE cow_id = NEW.id AND active AND ear_tag <> NEW.ear_tag;
+    -- ensure exactly one active assignment for (this cow, this tag)
+    IF EXISTS (SELECT 1 FROM cattle.ear_tag_assignments WHERE cow_id = NEW.id AND active) THEN
+      UPDATE cattle.ear_tag_assignments
+         SET ear_tag = NEW.ear_tag, active = TRUE, deactivated_at = NULL,
+             deactivated_reason = NULL, updated_at = now()
+       WHERE cow_id = NEW.id AND active;
+    ELSE
+      INSERT INTO cattle.ear_tag_assignments (ear_tag, cow_id, active, assigned_at)
+      VALUES (NEW.ear_tag, NEW.id, TRUE, now());
+    END IF;
+  ELSE
+    -- cow left active (sold/died/archived) or lost its tag → free its active assignment
+    UPDATE cattle.ear_tag_assignments
+       SET active = FALSE, deactivated_at = COALESCE(deactivated_at, now()),
+           deactivated_reason = COALESCE(deactivated_reason,
+             CASE WHEN NEW.status <> 'active' THEN NEW.status ELSE 'untagged' END),
+           updated_at = now()
+     WHERE cow_id = NEW.id AND active;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_cows_sync_ear_tag_assignment ON cattle.cows;
+CREATE TRIGGER trg_cows_sync_ear_tag_assignment
+AFTER INSERT OR UPDATE OF ear_tag, status
+ON cattle.cows
+FOR EACH ROW EXECUTE FUNCTION cattle.sync_ear_tag_assignment();
+
 -- cattle_processed (V2: 17 clients)
 CREATE TABLE IF NOT EXISTS cattle.cattle_processed (
   id          SERIAL PRIMARY KEY,
@@ -6193,6 +6265,7 @@ DECLARE
         -- cattle → pen, purchasing, contacts
         ARRAY['fk_map_paddocks_pen',      'ALTER TABLE map.paddocks ADD CONSTRAINT fk_map_paddocks_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_pen',              'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_pen FOREIGN KEY (pen_id) REFERENCES pen.pens(id) ON DELETE SET NULL'],
+        ARRAY['fk_ear_tag_assign_cow',    'ALTER TABLE cattle.ear_tag_assignments ADD CONSTRAINT fk_ear_tag_assign_cow FOREIGN KEY (cow_id) REFERENCES cattle.cows(id) ON DELETE CASCADE'],
         ARRAY['fk_cows_purchase_lot',     'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_purchase_lot FOREIGN KEY (purchase_lot_id) REFERENCES purchasing.purchase_lots(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_program_id',       'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_program_id FOREIGN KEY (program_id) REFERENCES cattle.cattle_program_types(id) ON DELETE SET NULL'],
         ARRAY['fk_cows_vendor',           'ALTER TABLE cattle.cows ADD CONSTRAINT fk_cows_vendor FOREIGN KEY (vendor_id) REFERENCES contacts.contacts(contact_id) ON DELETE SET NULL'],
@@ -6940,28 +7013,41 @@ COMMIT;
 -- ████████████████████████████████████████████████████████████████
 
 -- ████████████████████████████████████████████████████████████████
--- ██  LSJH-346 — ear-tag uniqueness (ACTIVE cattle only)
+-- ██  Ear-tag uniqueness (moved to cattle.ear_tag_assignments)
 -- ████████████████████████████████████████████████████████████████
--- Ear tags are legitimately reused across HISTORIC animals (sold/died/
--- archived — CFR-migrated boxes carry such rows that must never be mutated),
--- so uniqueness is enforced for active cattle only via a partial index.
--- Self-deploying + skip-and-warn: a box that still has active-status
--- duplicates logs a WARNING instead of crashing boot, stays index-less, and
--- self-heals on the next boot after scripts/dedupe-ear-tags.js has been run
--- (Reconcile → "Duplicate Ear Tags" lists offenders). Consumers: the POST
--- /api/cows 23505→409 branch and generate-records' ON CONFLICT both key off
--- this index.
+-- LSJH-346's uq_cows_ear_tag_active (partial unique on cattle.cows(ear_tag)
+-- WHERE status='active') is RETIRED: a reused tag whose prior holder was never
+-- marked sold forced that index to skip-and-warn and needed the `tag~id` rename
+-- hack. Uniqueness now lives on cattle.ear_tag_assignments — one ACTIVE row per
+-- tag, and one active tag per cow — decoupled from cows.status. initFarmDb drops
+-- the legacy uq_cows_ear_tag_active on existing DBs. Same self-deploying
+-- skip-and-warn deploy: a box with duplicate ACTIVE assignments logs a WARNING
+-- and self-heals on the next boot after the ensure-assignments pass
+-- (scripts/dedupe-ear-tags.js) resolves them. Consumers: the POST /api/cows and
+-- PUT /api/cows/:id 23505→409 branches now key off uq_ear_tag_assignment_active
+-- (raised by the sync trigger's INSERT).
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_indexes
-     WHERE schemaname = 'cattle' AND indexname = 'uq_cows_ear_tag_active'
+     WHERE schemaname = 'cattle' AND indexname = 'uq_ear_tag_assignment_active'
   ) THEN
     BEGIN
-      CREATE UNIQUE INDEX uq_cows_ear_tag_active
-          ON cattle.cows(ear_tag) WHERE status = 'active';
+      CREATE UNIQUE INDEX uq_ear_tag_assignment_active
+          ON cattle.ear_tag_assignments(ear_tag) WHERE active;
     EXCEPTION WHEN OTHERS THEN
-      RAISE WARNING 'LSJH-346: uq_cows_ear_tag_active skipped (active-status duplicate ear tags present? run scripts/dedupe-ear-tags.js) — %', SQLERRM;
+      RAISE WARNING 'ear-tag: uq_ear_tag_assignment_active skipped (duplicate ACTIVE ear-tag assignments? run scripts/dedupe-ear-tags.js) — %', SQLERRM;
+    END;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE schemaname = 'cattle' AND indexname = 'uq_ear_tag_assignment_cow_active'
+  ) THEN
+    BEGIN
+      CREATE UNIQUE INDEX uq_ear_tag_assignment_cow_active
+          ON cattle.ear_tag_assignments(cow_id) WHERE active;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'ear-tag: uq_ear_tag_assignment_cow_active skipped (a cow has >1 active tag assignment?) — %', SQLERRM;
     END;
   END IF;
 END $$;
