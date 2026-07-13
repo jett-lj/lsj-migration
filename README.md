@@ -91,6 +91,8 @@ Requires a running PostgreSQL instance (creates/drops `lsj_migration_test` datab
 
 The migration is **idempotent** — `ON CONFLICT DO NOTHING` on every INSERT means re-running the same source data against the same target produces the same end state, no duplicates. That gives you several knobs to recover from mid-run failures without starting over.
 
+> **Caveat (LSJH-781):** the idempotency claim holds only when the per-run TRUNCATE runs. `finance.costs` (and `costs_feed_detail`) have SERIAL PKs and **no natural unique key**, so `ON CONFLICT` never fires for them — with `SKIP_TRUNCATE=1` (the multi-source second pass), re-loading the same source **silently doubles** those tables. Never re-run a source against a target under SKIP_TRUNCATE; the planned fix is a provenance guard + $-sum reconciliation (LSJH-783).
+
 ### Three failure modes (and what each one means)
 
 | Symptom in log | What happened | Counted as | Aborts the table? |
