@@ -3599,20 +3599,44 @@ const mappings = [
     sourceTable: 'CommodContracts',
     sourceDatabase: 'CATTLE_feed',
     targetTable: 'commodity.commodcontracts',
+    // commodcontracts carries TWO column families for the same five facts:
+    // the ETL-era names read by the contractDeliveries() report and the
+    // CFR-native names read by the LSJ Purchase Contracts editor. Both are
+    // tonnes. Write BOTH so neither reader renders a migrated contract blank
+    // (LSJ mirrors the pairs on in-app writes; this keeps migrated rows
+    // symmetric with those). Also carries the full CFR contract field set —
+    // freight/levy/escalation/spec/vendor-dec/RCTI/weights-basis — which the
+    // printed-contract view needs. Those columns are added by CFR's
+    // DB_Design_Update_Module on app start, so any current CFR DB has them.
     query: `SELECT Contract_No, Supplier_AC_No, Commod_Code, Start_date, End_date,
-                   Price_ton, Wght_contracted, Wght_delivered, Notes, Contract_Complete
+                   Price_ton, Frght_ton, Road_Levy_ton, Value_Incr_Per_Month, FarmGatePrice,
+                   Wght_contracted, Wght_delivered, Specifications, Vendor_Dec, Notes,
+                   Contract_Complete, Pay_Suppliers_Weight, RTCI_invoice
             FROM dbo.CommodContracts ORDER BY Contract_No`,
     columns: [
       { source: 'Contract_No',      target: 'contract_no',         transform: trimOrNull },
       { source: 'Supplier_AC_No',   target: 'supplier_ac_no',      transform: toNum },
       { source: 'Commod_Code',      target: 'commod_code',         transform: toNum },
       { source: 'Start_date',       target: 'delivery_from',       transform: toDate },
+      { source: 'Start_date',      target: 'start_date',          transform: toDate },
       { source: 'End_date',         target: 'delivery_to',         transform: toDate },
+      { source: 'End_date',        target: 'end_date',            transform: toDate },
       { source: 'Price_ton',        target: 'price_per_tonne',     transform: toNum },
+      { source: 'Price_ton',       target: 'price_ton',           transform: toNum },
+      { source: 'Frght_ton',        target: 'frght_ton',           transform: toNum },
+      { source: 'Road_Levy_ton',    target: 'road_levy_ton',       transform: toNum },
+      { source: 'Value_Incr_Per_Month', target: 'value_incr_per_month', transform: toNum },
+      { source: 'FarmGatePrice',    target: 'farmgateprice',       transform: toNum },
       { source: 'Wght_contracted',  target: 'quantity_ordered',    transform: toNum },
+      { source: 'Wght_contracted', target: 'wght_contracted',     transform: toNum },
       { source: 'Wght_delivered',   target: 'quantity_delivered',  transform: toNum },
+      { source: 'Wght_delivered',  target: 'wght_delivered',      transform: toNum },
+      { source: 'Specifications',   target: 'specifications',      transform: trimOrNull },
+      { source: 'Vendor_Dec',       target: 'vendor_dec',          transform: trimOrNull },
       { source: 'Notes',            target: 'notes',               transform: trimOrNull },
       { source: 'Contract_Complete', target: 'contract_complete',  transform: toBool },
+      { source: 'Pay_Suppliers_Weight', target: 'pay_suppliers_weight', transform: toBool },
+      { source: 'RTCI_invoice',     target: 'rtci_invoice',        transform: toBool },
     ],
   },
 
