@@ -20,14 +20,17 @@ column-coverage tests.
 | Source | Target | Transform | Status |
 |---|---|---|---|
 | Contact_ID | id | direct | ✓ |
+| Contact_Type | type | mapContactType (numeric id → enum) | ✓ |
 | Company | company | trimOrNull | ✓ |
 | First_Name | first_name | trimOrNull | ✓ |
 | Last_Name | last_name | trimOrNull | ✓ |
 | Tel_No | phone | trimOrNull | ✓ |
 | Email | email | trimOrNull | ✓ |
-| Address_1 | address | trimOrNull | ✓ |
+| Address_1 | address (+ address_1 mirror) | trimOrNull | ✓ |
+| PostCode | post_code (+ postcode mirror) | trimOrNull | ✓ |
 | ABN | abn | trimOrNull | ✓ |
 | Notes | notes | trimOrNull | ✓ |
+| Last_Modified_timestamp | updated_at (+ legacy_modified_at) | toDate | ✓ |
 
 ## Diseases → diseases
 | Source | Target | Transform | Status |

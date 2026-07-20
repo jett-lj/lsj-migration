@@ -215,6 +215,14 @@ describe('Transform functions Ã¢â‚¬â€ exhaustive', () => {
   describe('mapContactType', () => {
     it.each([
       [null, 'other'], [undefined, 'other'], ['', 'other'],
+      // CFR stores the numeric Contact_Type_ID — this is the real input path.
+      [2, 'agistor'], [3, 'vendor'], [4, 'carrier'], [6, 'buyer'],
+      [7, 'abattoir'], [8, 'agent'], [10, 'buyer'], [11, 'customer-feeder'],
+      ['11', 'customer-feeder'], // numeric-as-string still resolves by id
+      [1, 'other'], [5, 'other'], [9, 'other'], [24, 'other'], [0, 'other'],
+      // Name fallback (renamed/custom types, or resolved names).
+      ['agistor', 'agistor'], ['Custom Feeding', 'customer-feeder'],
+      ['Customer Feeder', 'customer-feeder'], ['Packer', 'abattoir'],
       ['vendor', 'vendor'], ['V', 'vendor'], ['Vendor Supply', 'vendor'],
       ['agent', 'agent'], ['A', 'agent'],
       ['buyer', 'buyer'], ['B', 'buyer'],
@@ -571,15 +579,20 @@ describe('Per-table column integration', () => {
     expect(r.last_name).toBe('Smith');
     expect(r.salutation).toBe('Mr');
     expect(r.address_1).toBe('123 Main St');
+    // OG columns the app reads must also be populated (not just legacy mirrors).
+    expect(r.address).toBe('123 Main St');
     expect(r.address_2).toBe('Suite 4');
     expect(r.city).toBe('Brisbane');
     expect(r.state).toBe('QLD');
     expect(r.postcode).toBe('4000');
+    expect(r.post_code).toBe('4000');
     expect(r.tel_no).toBe('07 1234 5678');
     expect(r.mobile_no).toBe('0412345678');
     expect(r.fax_no).toBe('07 8765 4321');
     expect(r.email).toBe('john@acme.com');
     expect(r.contact_type).toBe(3);
+    // Contact_Type 3 is CFR's "Supplier of animals" id → resolves to the enum.
+    expect(r.type).toBe('vendor');
     expect(r.tail_tag_no).toBe('TT99');
     expect(r.brand).toBe('ACM');
     expect(r.notes).toBe('Test contactwith nulls');   // null bytes stripped
@@ -593,6 +606,8 @@ describe('Per-table column integration', () => {
     expect(r.brand_drawing_filename).toBe('acme.png');
     expect(r.abattoir_establishment_number).toBe('EST001');
     expect(r.last_modified_timestamp).not.toBeNull();
+    // OG last-changed column the app surfaces — seeded from CFR Last_Modified.
+    expect(r.updated_at).not.toBeNull();
   });
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Diseases: 9 columns Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬

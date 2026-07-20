@@ -138,14 +138,40 @@ function mapCostType(v) {
 /** Junk breed names that should be excluded from migration */
 const JUNK_BREEDS = new Set(['Breed Name']);
 
-/** Map legacy contact type to new enum */
+// CFR stores Contacts.Contact_Type as a numeric Contact_Type_ID (FK into the
+// ContactTypes lookup), NOT a name — frmContacts12 binds the combo to the id and
+// hardcodes `Val(...) = 11`. So classify by the stable, code-assigned ids from
+// CFR's DesignUpdate seed (DesignUpdate_Module.vb:3024-3035 / :1314). The display
+// NAMES are user-editable (e.g. Abattoir → "Packer", id 3 → "Animal supplier"),
+// so the name pass below is only a fallback for custom/unknown ids. Ids 2 & 11
+// carry the LSJH-505 types (agistor, customer-feeder). Anything else → 'other'.
+const CONTACT_TYPE_BY_ID = {
+  2: 'agistor', // Agistment provider
+  3: 'vendor', // Supplier of animals
+  4: 'carrier', // Transport provider
+  6: 'buyer', // Buyer of the animal carcase
+  7: 'abattoir', // Abattoir / processing plant
+  8: 'agent', // Facilitates buying/selling of animals
+  10: 'buyer', // Animal buyer
+  11: 'customer-feeder', // Custom feeding client
+  // 1 commodity supplier · 5 software · 9 misc · 24 drug supplies → 'other'
+};
+
+/** Map legacy CFR contact type (numeric id, or a name as fallback) to the LSJ enum. */
 function mapContactType(v) {
-  if (!v) return 'other';
+  if (v === null || v === undefined || String(v).trim() === '') return 'other';
+  // Primary path: CFR stores the numeric Contact_Type_ID.
+  const n = Number(v);
+  if (Number.isInteger(n)) return CONTACT_TYPE_BY_ID[n] || 'other';
+  // Fallback: classify by name substring (renamed/custom types, or if a caller
+  // ever passes the resolved ContactTypes name instead of the id).
   const s = String(v).toLowerCase().trim();
+  if (s.includes('agist')) return 'agistor';
+  if (s.includes('custom') || s.includes('feeder')) return 'customer-feeder';
   if (s.includes('vendor') || s === 'v') return 'vendor';
   if (s.includes('agent') || s === 'a') return 'agent';
   if (s.includes('buyer') || s === 'b') return 'buyer';
-  if (s.includes('abattoir') || s.includes('meatwork')) return 'abattoir';
+  if (s.includes('abattoir') || s.includes('meatwork') || s.includes('packer')) return 'abattoir';
   if (s.includes('carrier') || s.includes('transport')) return 'carrier';
   return 'other';
 }
@@ -212,10 +238,15 @@ const mappings = [
       { source: 'First_Name',    target: 'first_name',            transform: trimOrNull },
       { source: 'Last_Name',     target: 'last_name',             transform: trimOrNull },
       { source: 'Salutation',    target: 'title',                 transform: trimOrNull },
+      // OG columns are what the LSJ app reads/writes; address_1 / postcode are
+      // the V2 legacy mirrors kept for round-trip. Populate BOTH so imported
+      // contacts show their address in the app (not just the legacy columns).
+      { source: 'Address_1',     target: 'address',               transform: trimOrNull },
       { source: 'Address_1',     target: 'address_1',             transform: trimOrNull },
       { source: 'Address_2',     target: 'address_2',             transform: trimOrNull },
       { source: 'City',          target: 'city',                  transform: trimOrNull },
       { source: 'State',         target: 'state',                 transform: trimOrNull },
+      { source: 'PostCode',      target: 'post_code',             transform: trimOrNull },
       { source: 'PostCode',      target: 'postcode',              transform: trimOrNull },
       { source: 'Tel_No',        target: 'phone',                 transform: trimOrNull },
       { source: 'Mobile_No',     target: 'mobile',                transform: trimOrNull },
@@ -232,6 +263,9 @@ const mappings = [
       { source: 'Agistment_Paddock_Rate', target: 'paddock_agistment_rate', transform: toNum },
       { source: 'Agistment_Feedlot_Rate', target: 'feedlot_agistment_rate', transform: toNum },
       { source: 'Invoice_careof', target: 'invoice_co',           transform: trimOrNull },
+      // updated_at is the OG "last changed" column the app surfaces; seed it
+      // from CFR's Last_Modified so migrated contacts show a real Last-Updated.
+      { source: 'Last_Modified_timestamp', target: 'updated_at',         transform: toDate },
       { source: 'Last_Modified_timestamp', target: 'legacy_modified_at', transform: toDate },
       // legacy-named mirror columns (round-trip contract — schema late-ALTER cols)
       { source: 'Salutation',    target: 'salutation',            transform: trimOrNull },

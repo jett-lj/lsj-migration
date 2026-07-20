@@ -20,7 +20,6 @@ Each entry documents the reason and risk level.
 | pens | is_hospital | FALSE | New feature — no legacy data |
 | pens | capacity | NULL | New feature |
 | pens | active | TRUE | New feature |
-| contacts | type | NULL | Will be classified post-migration |
 | contacts | pic | NULL | Property Identification Code — new field |
 | diseases | body_system | NULL | New classification field |
 | cows | photo_url | NULL | New feature |
